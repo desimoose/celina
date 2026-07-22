@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Reveriebot</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">Reveriebot</div>
+  <div class="tools" id="tools"></div>
+  <label class="provider">
+    <span>model</span>
+    <select id="provider"></select>
+  </label>
+</header>
+
+<main class="panes">
+
+  <aside class="pane workspace">
+    <div class="pane-head">
+      <span>Workspace</span>
+      <button id="refresh" class="ghost" title="Reload artifacts">refresh</button>
+    </div>
+    <ul id="files" class="files"></ul>
+    <p class="hint" id="ws-empty">
+      Nothing saved yet. Fetch a page or ask a question, then save the result
+      as an artifact.
+    </p>
+  </aside>
+
+  <section class="pane viewer">
+    <div class="urlbar">
+      <input id="url" type="text" spellcheck="false"
+             placeholder="Enter a URL to read, or open an artifact from the left" />
+      <button id="go">Open</button>
+      <button id="save" class="ghost" disabled>Save to workspace</button>
+    </div>
+    <div class="engine" id="engine"></div>
+    <div class="view" id="view">
+      <div class="placeholder">
+        <h1>A private reading space</h1>
+        <p>
+          Open a URL and it is fetched here — through Obscura when that binary
+          is installed, plain HTTP otherwise. Whatever is on screen becomes
+          context for the chat on the right.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="pane chat">
+    <div class="pane-head"><span>Assistant</span>
+      <button id="clear" class="ghost">clear</button>
+    </div>
+    <div id="log" class="log"></div>
+    <form id="composer" class="composer">
+      <textarea id="input" rows="3" placeholder="Ask about what you're reading…"></textarea>
+      <button id="send">Send</button>
+    </form>
+    <div class="usage" id="usage"></div>
+  </section>
+
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

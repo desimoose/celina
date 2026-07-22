@@ -1,0 +1,19 @@
+# secrets - never commit
+.env
+
+# vendored third-party tools (large binaries, fetched by scripts/setup.ps1)
+vendor/*
+!vendor/.gitkeep
+
+# saved research artifacts are personal by default
+workspace/*
+!workspace/.gitkeep
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# os
+Thumbs.db
+desktop.ini

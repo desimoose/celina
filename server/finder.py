@@ -139,6 +139,22 @@ def arxiv(query, limit):
     return out
 
 
+def unpaywall_resolve(doi, email=None):
+    """Unpaywall: given a DOI, find the legal open-access copy. Not a search
+    engine - a resolver. This is what turns a paywalled result into a readable
+    one. Requires a contact email (free, no key): set FINDER_CONTACT_EMAIL."""
+    email = email or CONTACT
+    if not doi or not email:
+        return None
+    url = ("https://api.unpaywall.org/v2/"
+           + urllib.parse.quote(doi) + "?email=" + urllib.parse.quote(email))
+    data = _get_json(url)
+    if not data.get("is_oa"):
+        return None
+    loc = data.get("best_oa_location") or {}
+    return loc.get("url_for_pdf") or loc.get("url")
+
+
 # Register a source here and it joins every search. Keyless ones first;
 # the commented rows are the obvious next additions, each one function away.
 SOURCES = {
@@ -186,6 +202,26 @@ def search(query, limit=8, sources=None):
             notes.append(f"{name} didn't answer ({type(e).__name__})")
 
     results = list(seen.values())
+
+    # Enrichment: for hits that have a DOI but no open-access link, ask
+    # Unpaywall for the free copy. This is what makes paywalled results
+    # readable. Capped so a big result set can't stall the search.
+    if CONTACT:
+        for r in results[:15]:
+            if r.get("doi") and not r.get("oa_url"):
+                try:
+                    oa = unpaywall_resolve(r["doi"])
+                    if oa:
+                        r["oa_url"] = oa
+                        r["is_oa"] = True
+                        r["oa_via"] = "Unpaywall"
+                except (urllib.error.URLError, urllib.error.HTTPError,
+                        json.JSONDecodeError, TimeoutError):
+                    pass  # one DOI failing to resolve is not worth a note
+    else:
+        notes.append("Unpaywall skipped - set FINDER_CONTACT_EMAIL to unlock "
+                     "free copies of paywalled hits")
+
     # rank: open-access first, then by citations, then recency
     results.sort(key=lambda r: (
         0 if r.get("oa_url") else 1,

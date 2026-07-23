@@ -127,6 +127,118 @@ async function openUrl() {
   }
 }
 
+// ---------- finder (scholarly search) ----------
+
+const looksLikeUrl = (s) => /^https?:\/\//i.test(s);
+
+const escapeHtml = (s) =>
+  (s || "").replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function findPapers() {
+  const q = $("url").value.trim();
+  if (!q) return;
+  if (looksLikeUrl(q)) return openUrl();   // a pasted URL just opens
+
+  setEngine("searching open-access sources…");
+  $("find").disabled = true;
+  try {
+    const data = await fetch("/api/explore", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: q, provider: state.provider }),
+    }).then((r) => r.json());
+
+    if (data.error) { setEngine("search failed: " + data.error); return; }
+
+    renderResults(data);
+    const n = data.results.length;
+    setEngine(
+      `${n} result${n === 1 ? "" : "s"} · open-access first` +
+      (data.notes && data.notes.length ? " · " + data.notes.join(" · ") : "")
+    );
+  } catch (e) {
+    setEngine("search failed: " + e.message);
+  } finally {
+    $("find").disabled = false;
+  }
+}
+
+function renderResults(data) {
+  state.viewing = null;
+  state.activeFile = null;
+  $("save").disabled = true;
+
+  const wrap = document.createElement("div");
+  wrap.className = "results";
+
+  // grounded answer, or an honest note about why there isn't one
+  const note = document.createElement("div");
+  if (data.answer) {
+    note.className = "answer";
+    note.innerHTML =
+      `<div class="answer-head">grounded answer` +
+      `<span class="meta">${escapeHtml((data.provider || "") + " " + (data.model || ""))}</span></div>`;
+    const body = document.createElement("div");
+    body.className = "answer-body";
+    body.textContent = data.answer;
+    note.appendChild(body);
+  } else if (data.answer_error) {
+    note.className = "answer note";
+    note.textContent = "No grounded answer: " + data.answer_error +
+      " — the papers below still stand.";
+  } else {
+    note.className = "answer note";
+    note.textContent =
+      "Add a model key in .env for a grounded answer. The papers below are real regardless.";
+  }
+  wrap.appendChild(note);
+
+  data.results.forEach((r, i) => {
+    const el = document.createElement("div");
+    el.className = "paper";
+    const authors = r.authors || [];
+    const who = authors.slice(0, 3).join(", ") + (authors.length > 3 ? " et al." : "");
+    const meta = [
+      who, r.year, r.venue,
+      r.cited_by != null ? `cited by ${r.cited_by}` : null, r.source,
+    ].filter(Boolean).join(" · ");
+
+    el.innerHTML =
+      `<div class="paper-title">[${i + 1}] ${escapeHtml(r.title || "untitled")}</div>` +
+      `<div class="paper-meta">${escapeHtml(meta)}</div>`;
+
+    const actions = document.createElement("div");
+    actions.className = "paper-actions";
+    if (r.oa_url) {
+      const read = document.createElement("button");
+      read.className = "ghost";
+      read.textContent = "Read full text";
+      read.onclick = () => { $("url").value = r.oa_url; openUrl(); };
+      actions.appendChild(read);
+    }
+    const link = r.oa_url || r.url;
+    if (link) {
+      const a = document.createElement("a");
+      a.href = link; a.target = "_blank"; a.rel = "noopener";
+      a.className = "paper-link";
+      a.textContent = r.oa_url ? "open access ↗" : "link ↗";
+      actions.appendChild(a);
+    }
+    el.appendChild(actions);
+
+    if (r.abstract) {
+      const ab = document.createElement("div");
+      ab.className = "paper-abstract";
+      ab.textContent = r.abstract;
+      el.appendChild(ab);
+    }
+    wrap.appendChild(el);
+  });
+
+  $("view").replaceChildren(wrap);
+}
+
 async function saveCurrent() {
   if (!state.viewing) return;
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
@@ -210,8 +322,10 @@ async function send(e) {
 
 // ---------- wiring ----------
 
+$("find").onclick = findPapers;
 $("go").onclick = openUrl;
-$("url").addEventListener("keydown", (e) => { if (e.key === "Enter") openUrl(); });
+// Search is the primary action; a pasted URL still opens (findPapers detects it).
+$("url").addEventListener("keydown", (e) => { if (e.key === "Enter") findPapers(); });
 $("save").onclick = saveCurrent;
 $("refresh").onclick = loadFiles;
 $("composer").addEventListener("submit", send);

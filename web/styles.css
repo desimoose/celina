@@ -160,3 +160,38 @@ input:focus, textarea:focus, select:focus {
   .panes { grid-template-columns: minmax(0, 1fr) 300px; }
   .workspace { display: none; }
 }
+
+/* ---- finder results ---- */
+.results { display: flex; flex-direction: column; gap: 14px; padding: 4px 2px; }
+
+.answer {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.answer-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); margin-bottom: 8px;
+}
+.answer-head .meta { text-transform: none; letter-spacing: 0; }
+.answer-body { white-space: pre-wrap; }
+.answer.note { color: var(--muted); border-left-color: var(--warn); font-size: 14px; }
+
+.paper {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  background: var(--panel);
+}
+.paper-title { font-weight: 600; line-height: 1.4; }
+.paper-meta { color: var(--muted); font-size: 13px; margin-top: 3px; }
+.paper-actions { display: flex; align-items: center; gap: 12px; margin-top: 9px; }
+.paper-link { color: var(--ok); font-size: 13px; text-decoration: none; }
+.paper-link:hover { text-decoration: underline; }
+.paper-abstract {
+  margin-top: 9px; font-size: 13.5px; color: var(--text); opacity: .82;
+  line-height: 1.55; max-height: 5.5em; overflow: hidden;
+}

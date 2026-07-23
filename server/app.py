@@ -21,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import finder  # noqa: E402
 import gateway  # noqa: E402
 import tools  # noqa: E402
 
@@ -120,6 +121,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if route == "/api/chat":
             return self._chat(payload)
+        if route == "/api/explore":
+            return self._explore(payload)
         if route == "/api/fetch":
             return self._fetch(payload)
         if route == "/api/workspace/save":
@@ -148,6 +151,36 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(502, {"error": str(e)})
         except Exception as e:  # unexpected - still return JSON, not a stack page
             return self._send(500, {"error": f"unexpected: {e}"})
+
+    def _explore(self, payload):
+        query = (payload.get("query") or "").strip()
+        provider = payload.get("provider")  # optional - results work keyless
+        if not query:
+            return self._send(400, {"error": "query is required"})
+
+        try:
+            hits, notes = finder.search(query, limit=8)
+        except Exception as e:
+            return self._send(502, {"error": f"search failed: {e}"})
+
+        resp = {"query": query, "results": hits, "notes": notes, "answer": None}
+
+        # The grounded answer needs a model. No provider (or no key) -> results
+        # only; the papers are useful on their own.
+        if provider and hits:
+            try:
+                reply = gateway.chat(
+                    provider,
+                    messages=[{"role": "user", "content": query}],
+                    system=finder.grounding_system(hits),
+                )
+                resp.update(answer=reply["text"], model=reply["model"],
+                            provider=reply["provider"])
+            except gateway.GatewayError as e:
+                resp["answer_error"] = str(e)   # show papers, note the model issue
+            except Exception as e:
+                resp["answer_error"] = f"unexpected: {e}"
+        return self._send(200, resp)
 
     def _fetch(self, payload):
         url = (payload.get("url") or "").strip()

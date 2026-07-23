@@ -368,6 +368,17 @@ def to_context(results):
     return "\n\n".join(lines)
 
 
+def grounding_system(results):
+    """The instruction that keeps the model honest: answer only from the
+    retrieved papers, cite them by number, admit the gaps."""
+    return (
+        "You are a research companion. Answer using ONLY the numbered sources "
+        "below. Cite them inline like [1], [3]. If the sources do not cover "
+        "something, say so plainly instead of guessing. Lead with the finding. "
+        "Never invent a citation.\n\nSources:\n" + to_context(results)
+    )
+
+
 def explore(query, provider, limit=8):
     """Search real papers, then have an LLM answer *grounded in them*.
 
@@ -382,12 +393,7 @@ def explore(query, provider, limit=8):
     if not hits:
         return {"answer": None, "results": [], "notes": notes}
 
-    system = (
-        "You are a research companion. Answer using ONLY the numbered sources "
-        "below. Cite them inline like [1], [3]. If the sources do not cover "
-        "something, say so plainly instead of guessing. Lead with the finding. "
-        "Never invent a citation.\n\nSources:\n" + to_context(hits)
-    )
+    system = grounding_system(hits)
     reply = gateway.chat(
         provider,
         messages=[{"role": "user", "content": query}],

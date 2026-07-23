@@ -1,0 +1,268 @@
+"""Finder - open-access scholarly search.
+
+Queries open scientific sources with no API key and returns normalized
+results an LLM can ground its answers in: real papers, real authors, real
+open-access links - not hallucinated citations.
+
+Stdlib only. Each source is isolated, so one being slow or down never takes
+the search down with it. Add a source by writing one function and registering
+it in SOURCES.
+
+CLI:  python server/finder.py "your question"
+"""
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+
+TIMEOUT = 20
+
+# OpenAlex gives faster, more reliable service to requests that identify a
+# contact - the "polite pool". Optional, set FINDER_CONTACT_EMAIL to use it.
+CONTACT = os.environ.get("FINDER_CONTACT_EMAIL", "").strip()
+
+UA = "Reveriebot-Finder/0.1 (open-access research tool)"
+
+
+def _get(url):
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        return resp.read()
+
+
+def _get_json(url):
+    return json.loads(_get(url).decode("utf-8"))
+
+
+def _reconstruct_abstract(inverted_index):
+    """OpenAlex stores abstracts as a word -> [positions] inverted index.
+    Rebuild the plain text from it."""
+    if not inverted_index:
+        return None
+    positions = []
+    for word, spots in inverted_index.items():
+        for spot in spots:
+            positions.append((spot, word))
+    positions.sort()
+    text = " ".join(word for _, word in positions)
+    return text[:1200] + ("..." if len(text) > 1200 else "")
+
+
+def _record(**kw):
+    """A normalized result. Every source maps into this shape."""
+    base = {
+        "title": None, "authors": [], "year": None, "venue": None,
+        "doi": None, "url": None, "oa_url": None, "is_oa": None,
+        "cited_by": None, "abstract": None, "source": None,
+    }
+    base.update(kw)
+    return base
+
+
+# --- Sources -------------------------------------------------------------
+
+def openalex(query, limit):
+    """OpenAlex: 250M+ works, no key, includes open-access status + PDF link.
+    The spine of the Finder."""
+    params = {"search": query, "per_page": limit, "sort": "relevance_score:desc"}
+    if CONTACT:
+        params["mailto"] = CONTACT
+    url = "https://api.openalex.org/works?" + urllib.parse.urlencode(params)
+    data = _get_json(url)
+    out = []
+    for w in data.get("results", []):
+        oa = w.get("open_access") or {}
+        loc = w.get("primary_location") or {}
+        src = loc.get("source") or {}
+        authors = [
+            (a.get("author") or {}).get("display_name")
+            for a in (w.get("authorships") or [])[:8]
+        ]
+        doi = (w.get("doi") or "").replace("https://doi.org/", "") or None
+        out.append(_record(
+            title=w.get("title") or w.get("display_name"),
+            authors=[a for a in authors if a],
+            year=w.get("publication_year"),
+            venue=src.get("display_name"),
+            doi=doi,
+            url=w.get("doi") or loc.get("landing_page_url"),
+            oa_url=oa.get("oa_url"),
+            is_oa=oa.get("is_oa"),
+            cited_by=w.get("cited_by_count"),
+            abstract=_reconstruct_abstract(w.get("abstract_inverted_index")),
+            source="OpenAlex",
+        ))
+    return out
+
+
+def arxiv(query, limit):
+    """arXiv: preprints, no key. Where research shows up before the paywall
+    closes. Returns Atom XML."""
+    params = {
+        "search_query": "all:" + query,
+        "max_results": limit,
+        "sortBy": "relevance",
+    }
+    url = "https://export.arxiv.org/api/query?" + urllib.parse.urlencode(params)
+    raw = _get(url)
+    ns = {"a": "http://www.w3.org/2005/Atom"}
+    root = ET.fromstring(raw)
+    out = []
+    for e in root.findall("a:entry", ns):
+        def text(tag):
+            node = e.find("a:" + tag, ns)
+            return node.text.strip() if node is not None and node.text else None
+
+        pdf = None
+        for link in e.findall("a:link", ns):
+            if link.get("title") == "pdf":
+                pdf = link.get("href")
+        published = text("published") or ""
+        out.append(_record(
+            title=text("title"),
+            authors=[
+                n.text.strip()
+                for n in e.findall("a:author/a:name", ns) if n.text
+            ][:8],
+            year=int(published[:4]) if published[:4].isdigit() else None,
+            venue="arXiv (preprint)",
+            url=text("id"),
+            oa_url=pdf,
+            is_oa=True,  # arXiv is open by definition
+            abstract=(text("summary") or "")[:1200] or None,
+            source="arXiv",
+        ))
+    return out
+
+
+# Register a source here and it joins every search. Keyless ones first;
+# the commented rows are the obvious next additions, each one function away.
+SOURCES = {
+    "openalex": openalex,   # keyless - the spine
+    "arxiv": arxiv,         # keyless - preprints
+    # "europepmc": europepmc,   # keyless - life-sciences full text
+    # "crossref": crossref,     # keyless - registered metadata
+    # "doaj": doaj,             # keyless - open-access journals
+    # "unpaywall": unpaywall,   # email param - legal OA copy of any DOI
+}
+
+
+# --- Aggregation ---------------------------------------------------------
+
+def _dedupe_key(rec):
+    if rec.get("doi"):
+        return rec["doi"].lower()
+    title = (rec.get("title") or "").lower()
+    return "".join(ch for ch in title if ch.isalnum())[:80]
+
+
+def search(query, limit=8, sources=None):
+    """Search every registered source, merge, dedupe, and rank.
+
+    Returns (results, notes) - notes records any source that failed, so the
+    caller can say "that one didn't answer" instead of failing the whole run.
+    """
+    chosen = sources or list(SOURCES)
+    seen = {}
+    notes = []
+    for name in chosen:
+        fn = SOURCES.get(name)
+        if not fn:
+            continue
+        try:
+            for rec in fn(query, limit):
+                if not rec.get("title"):
+                    continue
+                key = _dedupe_key(rec)
+                # keep the record that knows the most (prefer one with an OA link)
+                if key not in seen or (rec.get("oa_url") and not seen[key].get("oa_url")):
+                    seen[key] = rec
+        except (urllib.error.URLError, urllib.error.HTTPError, ET.ParseError,
+                json.JSONDecodeError, TimeoutError) as e:
+            notes.append(f"{name} didn't answer ({type(e).__name__})")
+
+    results = list(seen.values())
+    # rank: open-access first, then by citations, then recency
+    results.sort(key=lambda r: (
+        0 if r.get("oa_url") else 1,
+        -(r.get("cited_by") or 0),
+        -(r.get("year") or 0),
+    ))
+    return results[:limit], notes
+
+
+def to_context(results):
+    """Format results as a grounding block for an LLM. The model answers over
+    THESE - real papers with real links - so citations point at something that
+    exists. This is the difference between exploring knowledge and being told a
+    confident story."""
+    lines = []
+    for i, r in enumerate(results, 1):
+        who = ", ".join(r["authors"][:3]) + (" et al." if len(r["authors"]) > 3 else "")
+        head = f"[{i}] {r['title']}"
+        meta = " · ".join(x for x in [
+            who or None,
+            str(r["year"]) if r["year"] else None,
+            r["venue"],
+            f"cited by {r['cited_by']}" if r.get("cited_by") else None,
+        ] if x)
+        link = r.get("oa_url") or r.get("url") or ""
+        block = f"{head}\n    {meta}"
+        if link:
+            block += f"\n    {'open access: ' if r.get('oa_url') else ''}{link}"
+        if r.get("abstract"):
+            block += f"\n    {r['abstract'][:400]}"
+        lines.append(block)
+    return "\n\n".join(lines)
+
+
+def explore(query, provider, limit=8):
+    """Search real papers, then have an LLM answer *grounded in them*.
+
+    The model is told to use only the retrieved sources and to cite them by
+    number. That is the whole point: it explores knowledge with you instead of
+    telling you a confident story with invented references. Needs a provider
+    from the gateway (a BYOK key, or local Ollama - no key).
+    """
+    import gateway
+
+    hits, notes = search(query, limit=limit)
+    if not hits:
+        return {"answer": None, "results": [], "notes": notes}
+
+    system = (
+        "You are a research companion. Answer using ONLY the numbered sources "
+        "below. Cite them inline like [1], [3]. If the sources do not cover "
+        "something, say so plainly instead of guessing. Lead with the finding. "
+        "Never invent a citation.\n\nSources:\n" + to_context(hits)
+    )
+    reply = gateway.chat(
+        provider,
+        messages=[{"role": "user", "content": query}],
+        system=system,
+    )
+    return {"answer": reply["text"], "results": hits, "notes": notes,
+            "model": reply["model"], "provider": reply["provider"]}
+
+
+if __name__ == "__main__":
+    # scholarly text is full of unicode; don't let a console codepage crash it
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+    q = " ".join(sys.argv[1:]).strip()
+    if not q:
+        print('usage: python server/finder.py "your question"')
+        raise SystemExit(1)
+    hits, notes = search(q, limit=8)
+    print(f"\n{len(hits)} results for: {q}\n")
+    for n in notes:
+        print(f"  note: {n}")
+    if notes:
+        print()
+    print(to_context(hits))

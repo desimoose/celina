@@ -13,6 +13,7 @@ CLI:  python server/finder.py "your question"
 
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -139,6 +140,114 @@ def arxiv(query, limit):
     return out
 
 
+def _strip_tags(text):
+    """Crossref and Europe PMC abstracts arrive with XML/JATS tags. Strip them."""
+    if not text:
+        return None
+    clean = re.sub(r"<[^>]+>", "", text).strip()
+    clean = re.sub(r"\s+", " ", clean)
+    return (clean[:1200] + ("..." if len(clean) > 1200 else "")) or None
+
+
+def europepmc(query, limit):
+    """Europe PMC: life-sciences literature with full-text links, no key."""
+    params = {"query": query, "format": "json",
+              "resultType": "core", "pageSize": limit}
+    url = ("https://www.ebi.ac.uk/europepmc/webservices/rest/search?"
+           + urllib.parse.urlencode(params))
+    data = _get_json(url)
+    out = []
+    for r in (data.get("resultList") or {}).get("result", []):
+        oa_url = None
+        for f in ((r.get("fullTextUrlList") or {}).get("fullTextUrl") or []):
+            if f.get("documentStyle") == "pdf" and \
+                    f.get("availability") in ("Open access", "Free"):
+                oa_url = f.get("url")
+                break
+        doi = r.get("doi")
+        year = str(r.get("pubYear") or "")
+        out.append(_record(
+            title=r.get("title"),
+            authors=[a.strip() for a in (r.get("authorString") or "").split(",")
+                     if a.strip()][:8],
+            year=int(year) if year.isdigit() else None,
+            venue=r.get("journalTitle"),
+            doi=doi,
+            url=("https://doi.org/" + doi) if doi else None,
+            oa_url=oa_url,
+            is_oa=(r.get("isOpenAccess") == "Y"),
+            cited_by=r.get("citedByCount"),
+            abstract=_strip_tags(r.get("abstractText")),
+            source="Europe PMC",
+        ))
+    return out
+
+
+def crossref(query, limit):
+    """Crossref: the registry of record for DOIs, no key. No OA link itself -
+    Unpaywall enrichment fills that in."""
+    params = {"query": query, "rows": limit,
+              "select": ("title,author,issued,container-title,DOI,URL,"
+                         "is-referenced-by-count,abstract")}
+    url = "https://api.crossref.org/works?" + urllib.parse.urlencode(params)
+    if CONTACT:
+        url += "&mailto=" + urllib.parse.quote(CONTACT)
+    data = _get_json(url)
+    out = []
+    for it in (data.get("message") or {}).get("items", []):
+        dp = ((it.get("issued") or {}).get("date-parts") or [[None]])
+        year = dp[0][0] if dp and dp[0] else None
+        authors = [" ".join(x for x in [a.get("given"), a.get("family")] if x)
+                   for a in (it.get("author") or [])]
+        out.append(_record(
+            title=(it.get("title") or [None])[0],
+            authors=[a for a in authors if a][:8],
+            year=year,
+            venue=(it.get("container-title") or [None])[0],
+            doi=it.get("DOI"),
+            url=it.get("URL"),
+            cited_by=it.get("is-referenced-by-count"),
+            abstract=_strip_tags(it.get("abstract")),
+            source="Crossref",
+        ))
+    return out
+
+
+def doaj(query, limit):
+    """DOAJ: the Directory of Open Access Journals, no key. Every result is
+    open access by definition."""
+    url = ("https://doaj.org/api/search/articles/"
+           + urllib.parse.quote(query) + "?pageSize=" + str(limit))
+    data = _get_json(url)
+    out = []
+    for r in data.get("results", []):
+        b = r.get("bibjson") or {}
+        fulltext = None
+        for link in (b.get("link") or []):
+            if link.get("type") == "fulltext":
+                fulltext = link.get("url")
+                break
+        doi = None
+        for idf in (b.get("identifier") or []):
+            if idf.get("type") == "doi":
+                doi = idf.get("id")
+        year = str(b.get("year") or "")
+        out.append(_record(
+            title=b.get("title"),
+            authors=[a.get("name") for a in (b.get("author") or [])
+                     if a.get("name")][:8],
+            year=int(year) if year.isdigit() else None,
+            venue=(b.get("journal") or {}).get("title"),
+            doi=doi,
+            url=("https://doi.org/" + doi) if doi else fulltext,
+            oa_url=fulltext,
+            is_oa=True,
+            abstract=(b.get("abstract") or "")[:1200] or None,
+            source="DOAJ",
+        ))
+    return out
+
+
 def unpaywall_resolve(doi, email=None):
     """Unpaywall: given a DOI, find the legal open-access copy. Not a search
     engine - a resolver. This is what turns a paywalled result into a readable
@@ -158,12 +267,15 @@ def unpaywall_resolve(doi, email=None):
 # Register a source here and it joins every search. Keyless ones first;
 # the commented rows are the obvious next additions, each one function away.
 SOURCES = {
-    "openalex": openalex,   # keyless - the spine
-    "arxiv": arxiv,         # keyless - preprints
-    # "europepmc": europepmc,   # keyless - life-sciences full text
-    # "crossref": crossref,     # keyless - registered metadata
-    # "doaj": doaj,             # keyless - open-access journals
-    # "unpaywall": unpaywall,   # email param - legal OA copy of any DOI
+    "openalex": openalex,     # keyless - the spine
+    "arxiv": arxiv,           # keyless - preprints
+    "europepmc": europepmc,   # keyless - life-sciences full text
+    "crossref": crossref,     # keyless - registered metadata
+    # "doaj": doaj,           # keyless, but Cloudflare returns 403 to
+                              # non-browser clients on many networks. Function
+                              # is correct; enable if it's reachable from yours.
+    # Unpaywall is a resolver, not a search source - it runs as an
+    # enrichment pass inside search(), keyed on DOI. See unpaywall_resolve().
 }
 
 

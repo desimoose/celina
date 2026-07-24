@@ -15,7 +15,10 @@ import re
 import shutil
 import subprocess
 import urllib.error
+import urllib.parse
 import urllib.request
+
+import pdf
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VENDOR = os.path.join(ROOT, "vendor")
@@ -109,23 +112,67 @@ def _fetch_obscura(binary, url, timeout=30):
     return _BLANKS.sub("\n\n", out)
 
 
+def _looks_like_pdf_url(url):
+    path = urllib.parse.urlparse(url).path.lower()
+    return path.endswith(".pdf") or "/pdf/" in path
+
+
+def _fetch_obscura_pdf(binary, url, timeout=40):
+    """Fetch a PDF's raw bytes through Obscura and extract its text.
+
+    Uses `--dump original` (a straight HTTP GET through Obscura's own TLS, which
+    works where Python's cert store doesn't - e.g. arXiv) and deliberately does
+    NOT pass `--stealth`: stealth forces the browser render path, which never
+    fires a load event on a PDF and hangs. Bytes are captured raw (no text
+    decode); the PDF module turns them into readable text.
+    """
+    proc = subprocess.run(
+        [binary, "fetch", "--dump", "original", "--timeout", str(timeout), url],
+        capture_output=True, timeout=timeout + 40,
+    )
+    if proc.returncode != 0:
+        msg = proc.stderr.decode("utf-8", "replace").strip()[:300]
+        raise RuntimeError(msg or "obscura exited non-zero")
+    data = proc.stdout
+    if not pdf.looks_like_pdf(data):
+        raise RuntimeError("not a PDF")
+    return pdf.extract_text(data)  # (text, backend); raises if unreadable
+
+
 def fetch(url):
     """Fetch a page, preferring Obscura when it is available.
 
     Returns the readable text plus which engine actually did the work, so the
-    UI can be honest about whether the request was stealth-rendered or plain.
+    UI can be honest about how the request was made.
     """
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
     binary = find_obscura()
     if binary:
+        # A link that looks like a PDF goes straight to the byte path - no point
+        # spinning the browser only to have it hang on a non-HTML resource.
+        if _looks_like_pdf_url(url):
+            try:
+                text, backend = _fetch_obscura_pdf(binary, url)
+                return {"url": url, "engine": "obscura-pdf",
+                        "note": f"pdf · {backend}", "text": text}
+            except Exception:
+                pass  # not really a PDF, or unreadable - try the normal path
+
         try:
             # Obscura's --dump text is already readable; no regex strip needed.
             return {"url": url, "engine": "obscura", "note": "stealth",
                     "text": _fetch_obscura(binary, url)}
         except Exception as e:
-            # Obscura present but unhappy - fall through rather than fail the request
+            # An unmarked PDF (e.g. arXiv links carry no .pdf suffix) lands here
+            # as empty text - try the byte path before giving up.
+            try:
+                text, backend = _fetch_obscura_pdf(binary, url)
+                return {"url": url, "engine": "obscura-pdf",
+                        "note": f"pdf · {backend}", "text": text}
+            except Exception:
+                pass
             fallback_note = f"(obscura: {e}; used plain fetch)"
             try:
                 return {"url": url, "engine": "plain", "note": fallback_note,

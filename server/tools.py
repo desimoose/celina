@@ -84,15 +84,29 @@ def _fetch_plain(url):
         return resp.read().decode(charset, "replace")
 
 
-def _fetch_obscura(binary, url):
-    """Render through Obscura so the page loads like a real browser."""
+def _fetch_obscura(binary, url, timeout=30):
+    """Render through Obscura in stealth mode: a real browser load with a
+    consistent fingerprint and a fresh, cookieless jar - so the fetch is not
+    tied to any login or history. Obscura extracts readable text from the live
+    DOM itself (`--dump text`), which beats regex-stripping raw HTML.
+
+    Progress lines go to stderr; stdout is the page text. utf-8 is forced so
+    scholarly unicode does not trip the Windows console codepage.
+    """
     proc = subprocess.run(
-        [binary, "fetch", url],
-        capture_output=True, text=True, timeout=120,
+        [binary, "--stealth", "fetch", "--dump", "text",
+         "--timeout", str(timeout), url],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=timeout + 60,
     )
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip()[:300] or "obscura exited non-zero")
-    return proc.stdout
+    out = (proc.stdout or "").strip()
+    if not out:
+        # Empty almost always means a PDF or a JS/login wall the DOM text
+        # dump cannot read - let the caller fall back to a plain fetch.
+        raise RuntimeError("no readable text (likely a PDF or login wall)")
+    return _BLANKS.sub("\n\n", out)
 
 
 def fetch(url):
@@ -107,11 +121,12 @@ def fetch(url):
     binary = find_obscura()
     if binary:
         try:
-            return {"url": url, "engine": "obscura",
-                    "text": _readable(_fetch_obscura(binary, url))}
+            # Obscura's --dump text is already readable; no regex strip needed.
+            return {"url": url, "engine": "obscura", "note": "stealth",
+                    "text": _fetch_obscura(binary, url)}
         except Exception as e:
             # Obscura present but unhappy - fall through rather than fail the request
-            fallback_note = f"(obscura failed: {e}; used plain fetch)"
+            fallback_note = f"(obscura: {e}; used plain fetch)"
             try:
                 return {"url": url, "engine": "plain", "note": fallback_note,
                         "text": _readable(_fetch_plain(url))}

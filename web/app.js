@@ -6,6 +6,7 @@ const state = {
   provider: "anthropic",
   history: [],        // chat turns sent to the model
   viewing: null,      // { title, text } currently in the reading pane
+  results: null,      // the last search result (grounded answer + sources)
   activeFile: null,
 };
 
@@ -76,6 +77,7 @@ async function openArtifact(file) {
 
   state.activeFile = file.path;
   state.viewing = { title: file.name, text: data.content };
+  state.results = null;
   $("url").value = "";
   setEngine(`artifact · ${file.name}`);
 
@@ -119,6 +121,7 @@ async function openUrl() {
 
     state.viewing = { title: data.url, text: data.text };
     state.activeFile = null;
+    state.results = null;
     showText(data.text);
     setEngine(
       `${data.engine.startsWith("obscura") ? "via Obscura" : "plain fetch"} · ` +
@@ -157,6 +160,7 @@ async function findPapers() {
 
     if (data.error) { setEngine("search failed: " + data.error); return; }
 
+    data.query = data.query || q;
     renderResults(data);
     const n = data.results.length;
     setEngine(
@@ -173,7 +177,8 @@ async function findPapers() {
 function renderResults(data) {
   state.viewing = null;
   state.activeFile = null;
-  $("save").disabled = true;
+  state.results = data;          // a keepable research brief
+  $("save").disabled = false;
 
   const wrap = document.createElement("div");
   wrap.className = "results";
@@ -245,20 +250,60 @@ function renderResults(data) {
   $("view").replaceChildren(wrap);
 }
 
-async function saveCurrent() {
-  if (!state.viewing) return;
-  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-  const slug = state.viewing.title
+function slugify(s) {
+  return (s || "")
     .replace(/^https?:\/\//, "")
     .replace(/[^a-z0-9]+/gi, "-")
     .slice(0, 60)
     .replace(/^-|-$/g, "") || "artifact";
+}
 
-  const body = `# ${state.viewing.title}\n\nSaved ${new Date().toISOString()}\n\n---\n\n${state.viewing.text}`;
+// A search result saved as a citable research brief: the grounded answer,
+// then every source with its link - so a kept artifact stands on its own.
+function briefMarkdown(d) {
+  const out = [`# ${d.query || "research"}`, ""];
+  out.push(`Saved ${new Date().toISOString()}` +
+           (d.answer ? ` · ${(d.provider || "")} ${(d.model || "")}`.trimEnd() : ""), "");
+  out.push("## Grounded answer", "");
+  out.push(d.answer || "_(no grounded answer — the sources below are real regardless)_", "");
+  out.push("## Sources", "");
+  (d.results || []).forEach((r, i) => {
+    const authors = (r.authors || []).slice(0, 5).join(", ") +
+      ((r.authors || []).length > 5 ? " et al." : "");
+    const meta = [authors, r.year, r.venue,
+      r.cited_by != null ? `cited by ${r.cited_by}` : null, r.source]
+      .filter(Boolean).join(" · ");
+    out.push(`${i + 1}. **${r.title || "untitled"}**`);
+    if (meta) out.push(`   ${meta}`);
+    const link = r.oa_url || r.url;
+    if (link) out.push(`   ${r.oa_url ? "open access: " : ""}${link}`);
+    if (r.abstract) {
+      const a = r.abstract.replace(/\s+/g, " ").trim();
+      out.push(`   > ${a.slice(0, 300)}${a.length > 300 ? "…" : ""}`);
+    }
+    out.push("");
+  });
+  if (d.notes && d.notes.length) out.push("---", "", `_notes: ${d.notes.join(" · ")}_`);
+  return out.join("\n");
+}
+
+async function saveCurrent() {
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  let title, content;
+  if (state.viewing) {                         // a page or paper being read
+    title = state.viewing.title;
+    content = `# ${title}\n\nSaved ${new Date().toISOString()}\n\n---\n\n${state.viewing.text}`;
+  } else if (state.results) {                  // a search result -> a brief
+    title = state.results.query || "research";
+    content = briefMarkdown(state.results);
+  } else {
+    return;
+  }
+
   const res = await fetch("/api/workspace/save", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ path: `${stamp}-${slug}.md`, content: body }),
+    body: JSON.stringify({ path: `${stamp}-${slugify(title)}.md`, content }),
   }).then((r) => r.json());
 
   setEngine(res.error ? "save failed: " + res.error : "saved to workspace");

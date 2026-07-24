@@ -46,6 +46,17 @@ elseif (Confirm-Step "  Download Obscura? (~43 MB, prebuilt x86_64 Windows binar
     Write-Host "  Obscura installed" -ForegroundColor Green
 }
 
+# --- pypdf: clean PDF text extraction (the one Python dependency) ---
+$hasPypdf = $false
+try { python -c "import pypdf" 2>$null; if ($LASTEXITCODE -eq 0) { $hasPypdf = $true } } catch {}
+if ($hasPypdf) {
+    Write-Host "  pypdf: already installed" -ForegroundColor Green
+}
+elseif (Confirm-Step "  Install pypdf? (clean open-access PDF extraction; the app works without it too)") {
+    python -m pip install -r (Join-Path $root "requirements.txt")
+    Write-Host "  pypdf installed" -ForegroundColor Green
+}
+
 # --- Agent-Reach: 15-platform read/search ---
 if (Get-Command agent-reach -ErrorAction SilentlyContinue) {
     Write-Host "  Agent-Reach: already installed" -ForegroundColor Green

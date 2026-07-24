@@ -1,0 +1,11 @@
+# Reveriebot's only Python dependency.
+#
+# The app still RUNS with nothing installed - a stdlib PDF extractor and plain
+# fetch keep it working. pypdf is the one dependency worth having: it makes
+# open-access PDF text extraction clean and complete (correct ligatures, full
+# text) instead of the best-effort stdlib fallback. The reader shows which
+# backend ran ("pdf · pypdf" vs "pdf · stdlib").
+#
+#   pip install -r requirements.txt
+
+pypdf>=4.0

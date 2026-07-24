@@ -121,7 +121,7 @@ async function openUrl() {
     state.activeFile = null;
     showText(data.text);
     setEngine(
-      `${data.engine === "obscura" ? "rendered via Obscura" : "plain fetch"} · ` +
+      `${data.engine.startsWith("obscura") ? "via Obscura" : "plain fetch"} · ` +
       `${data.text.length.toLocaleString()} chars${data.note ? " · " + data.note : ""}`
     );
     $("save").disabled = false;

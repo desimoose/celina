@@ -19,7 +19,7 @@
 
 <main class="panes">
 
-  <aside class="pane workspace">
+  <aside class="pane workspace" aria-label="Workspace">
     <div class="pane-head">
       <span>Workspace</span>
       <button id="refresh" class="ghost" title="Reload artifacts">refresh</button>
@@ -31,9 +31,10 @@
     </p>
   </aside>
 
-  <section class="pane viewer">
+  <section class="pane viewer" aria-label="Reader">
     <div class="urlbar">
       <input id="url" type="text" spellcheck="false"
+             aria-label="Search open-access papers, or paste a URL to read"
              placeholder="Search open-access papers, or paste a URL to read" />
       <button id="find">Search</button>
       <button id="go" class="ghost">Open URL</button>
@@ -52,13 +53,14 @@
     </div>
   </section>
 
-  <section class="pane chat">
+  <section class="pane chat" aria-label="Assistant">
     <div class="pane-head"><span>Assistant</span>
       <button id="clear" class="ghost">clear</button>
     </div>
-    <div id="log" class="log"></div>
+    <div id="log" class="log" aria-live="polite"></div>
     <form id="composer" class="composer">
-      <textarea id="input" rows="3" placeholder="Ask about what you're reading…"></textarea>
+      <textarea id="input" rows="3" aria-label="Ask about what you're reading"
+                placeholder="Ask about what you're reading…"></textarea>
       <button id="send">Send</button>
     </form>
     <div class="usage" id="usage"></div>

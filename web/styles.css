@@ -55,6 +55,12 @@ input:focus, textarea:focus, select:focus {
   border-color: var(--accent);
 }
 
+/* Keyboard users get a clear ring; mouse users don't. */
+:where(button, a, [tabindex], input, textarea, select):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* ---- top bar ---- */
 .bar {
   display: flex;
@@ -164,34 +170,37 @@ input:focus, textarea:focus, select:focus {
 /* ---- finder results ---- */
 .results { display: flex; flex-direction: column; gap: 14px; padding: 4px 2px; }
 
+/* The grounded answer is the one framed, hero element. */
 .answer {
   background: var(--panel-2);
   border: 1px solid var(--line);
-  border-left: 3px solid var(--accent);
   border-radius: var(--radius);
-  padding: 12px 14px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
 }
 .answer-head {
-  display: flex; justify-content: space-between; align-items: baseline;
-  font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
-  color: var(--muted); margin-bottom: 8px;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--accent); margin-bottom: 10px;
 }
-.answer-head .meta { text-transform: none; letter-spacing: 0; }
-.answer-body { white-space: pre-wrap; }
-.answer.note { color: var(--muted); border-left-color: var(--warn); font-size: 14px; }
+.answer-head::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+}
+.answer-head .meta { margin-left: auto; text-transform: none; letter-spacing: 0; color: var(--muted); }
+.answer-body { white-space: pre-wrap; font-size: 15px; line-height: 1.62; }
+.answer.note { color: var(--muted); font-size: 14px; line-height: 1.55; }
 
-.paper {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 12px 14px;
-  background: var(--panel);
-}
-.paper-title { font-weight: 600; line-height: 1.4; }
-.paper-meta { color: var(--muted); font-size: 13px; margin-top: 3px; }
-.paper-actions { display: flex; align-items: center; gap: 12px; margin-top: 9px; }
+/* Sources are a clean divided list, not a stack of identical cards. */
+.paper { padding: 15px 2px; border-bottom: 1px solid var(--line); }
+.paper:last-child { border-bottom: 0; }
+.paper-title { font-size: 15px; font-weight: 500; line-height: 1.45; color: var(--text); }
+.paper-meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.paper-actions { display: flex; align-items: center; gap: 14px; margin-top: 10px; }
 .paper-link { color: var(--ok); font-size: 13px; text-decoration: none; }
 .paper-link:hover { text-decoration: underline; }
 .paper-abstract {
-  margin-top: 9px; font-size: 13.5px; color: var(--text); opacity: .82;
-  line-height: 1.55; max-height: 5.5em; overflow: hidden;
+  margin-top: 10px; font-size: 13.5px; color: var(--muted);
+  line-height: 1.6; max-width: 72ch;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }

@@ -56,7 +56,13 @@ async function loadFiles() {
     const li = document.createElement("li");
     li.innerHTML = `${f.name}<span class="meta">${(f.size / 1024).toFixed(1)} KB</span>`;
     if (f.path === state.activeFile) li.classList.add("active");
-    li.onclick = () => openArtifact(f);
+    li.tabIndex = 0;
+    li.setAttribute("role", "button");
+    const open = () => openArtifact(f);
+    li.onclick = open;
+    li.onkeydown = (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+    };
     ul.appendChild(li);
   }
 }

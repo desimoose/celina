@@ -22,7 +22,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import finder  # noqa: E402
+import finder  # noqa: E402
 import gateway  # noqa: E402
+import studio  # noqa: E402
 import tools  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -125,6 +127,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._explore(payload)
         if route == "/api/fetch":
             return self._fetch(payload)
+        if route == "/api/studio":
+            return self._studio(payload)
         if route == "/api/workspace/save":
             return self._save(payload)
         return self._send(404, {"error": "no such endpoint"})
@@ -181,6 +185,21 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 resp["answer_error"] = f"unexpected: {e}"
         return self._send(200, resp)
+
+    def _studio(self, payload):
+        provider = payload.get("provider")
+        fmt = (payload.get("format") or "").strip()
+        source = payload.get("source") or ""
+        if not provider:
+            return self._send(400, {"error": "select a model first"})
+        try:
+            return self._send(200, studio.generate(gateway, provider, fmt, source))
+        except ValueError as e:
+            return self._send(400, {"error": str(e)})
+        except gateway.GatewayError as e:
+            return self._send(502, {"error": str(e)})
+        except Exception as e:
+            return self._send(500, {"error": f"unexpected: {e}"})
 
     def _fetch(self, payload):
         url = (payload.get("url") or "").strip()

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -8,65 +8,162 @@
 </head>
 <body>
 
-<header class="bar">
-  <div class="brand">Reveriebot</div>
-  <div class="tools" id="tools"></div>
-  <label class="provider">
-    <span>model</span>
-    <select id="provider"></select>
-  </label>
-</header>
+<div class="app">
 
-<main class="panes">
+  <!-- workspace rail -->
+  <nav class="rail" aria-label="Workspace">
+    <div class="brand" aria-hidden="true">R</div>
 
-  <aside class="pane workspace" aria-label="Workspace">
-    <div class="pane-head">
-      <span>Workspace</span>
-      <button id="refresh" class="ghost" title="Reload artifacts">refresh</button>
+    <div class="nav">
+      <button class="navbtn is-active" data-view="work" aria-label="Search and read">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <span>Search</span>
+      </button>
+      <button class="navbtn" data-view="library" aria-label="Library">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M3 13l9 5 9-5"/></svg>
+        <span>Library</span>
+      </button>
+      <button class="navbtn navbtn--studio" data-view="studio" aria-label="Studio">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l1.5 4.5L18 10l-4.5 1.5L12 16l-1.5-4.5L6 10l4.5-1.5L12 4Z"/></svg>
+        <span>Studio</span>
+      </button>
+      <button class="navbtn navbtn--soon" data-view="editor" aria-label="Editor, coming soon">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="8" y1="4" x2="8" y2="20"/><line x1="16" y1="4" x2="16" y2="20"/><line x1="3" y1="12" x2="21" y2="12"/></svg>
+        <span>Editor</span>
+        <em class="soon">soon</em>
+      </button>
     </div>
-    <ul id="files" class="files"></ul>
-    <p class="hint" id="ws-empty">
-      Nothing saved yet. Fetch a page or ask a question, then save the result
-      as an artifact.
-    </p>
-  </aside>
 
-  <section class="pane viewer" aria-label="Reader">
-    <div class="urlbar">
-      <input id="url" type="text" spellcheck="false"
-             aria-label="Search open-access papers, or paste a URL to read"
-             placeholder="Search open-access papers, or paste a URL to read" />
-      <button id="find">Search</button>
-      <button id="go" class="ghost">Open URL</button>
-      <button id="save" class="ghost" disabled>Save to workspace</button>
+    <div class="rail-foot">
+      <label class="model">
+        <span>Model</span>
+        <select id="provider" aria-label="Model provider"></select>
+      </label>
+      <div class="tools" id="tools" aria-label="Detected tools"></div>
     </div>
-    <div class="engine" id="engine"></div>
-    <div class="view" id="view">
-      <div class="placeholder">
-        <h1>A private reading space</h1>
-        <p>
-          Open a URL and it is fetched here — through Obscura when that binary
-          is installed, plain HTTP otherwise. Whatever is on screen becomes
-          context for the chat on the right.
-        </p>
+  </nav>
+
+  <!-- stage: one surface visible at a time -->
+  <main class="stage">
+
+    <!-- Search + reader -->
+    <section class="surface" id="s-work" aria-label="Search and read">
+      <div class="toolbar">
+        <div class="field">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="url" type="text" spellcheck="false"
+                 aria-label="Search open-access papers, or paste a URL to read"
+                 placeholder="Search open-access papers, or paste a URL to read" />
+        </div>
+        <button id="find" class="btn btn--primary">Search</button>
+        <button id="go" class="btn btn--ghost">Open URL</button>
+        <button id="save" class="btn btn--ghost" disabled>Save</button>
+        <div class="status" id="engine" aria-live="polite"></div>
       </div>
-    </div>
-  </section>
+      <div class="view" id="view">
+        <div class="empty">
+          <h1>Find the source. Read it. Make something.</h1>
+          <p>Search open-access papers, read the full text privately through a
+             stealth browser, then turn what you find into content in the Studio.</p>
+        </div>
+      </div>
+    </section>
 
-  <section class="pane chat" aria-label="Assistant">
-    <div class="pane-head"><span>Assistant</span>
-      <button id="clear" class="ghost">clear</button>
+    <!-- Library -->
+    <section class="surface" id="s-library" aria-label="Library" hidden>
+      <div class="surface-head">
+        <h2>Library</h2>
+        <button id="refresh" class="btn btn--ghost">Refresh</button>
+      </div>
+      <ul id="files" class="lib"></ul>
+      <p class="empty-note" id="ws-empty">
+        Nothing kept yet. Save a brief, a paper, or a Studio draft and it lands here.
+      </p>
+    </section>
+
+    <!-- Studio -->
+    <section class="surface surface--studio" id="s-studio" aria-label="Studio" hidden>
+      <div class="surface-head">
+        <h2>Studio</h2>
+        <span class="src" id="studio-src">No source yet</span>
+      </div>
+      <p class="studio-lead">
+        Turn what you have into content. Studio writes from your current source,
+        grounded in it.
+      </p>
+      <div class="formats">
+        <button class="fmt" data-fmt="tiktok">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M12 15V4l6 2.5"/></svg>
+          <span class="fmt-name">TikTok script</span>
+          <span class="fmt-desc">A 45-60s spoken yap with a hook.</span>
+        </button>
+        <button class="fmt" data-fmt="podcast">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="fmt-name">Podcast episode</span>
+          <span class="fmt-desc">A two-host segment, back and forth.</span>
+        </button>
+        <button class="fmt" data-fmt="linkedin">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>
+          <span class="fmt-name">LinkedIn slideshow</span>
+          <span class="fmt-desc">A 6-8 slide carousel, hook to takeaway.</span>
+        </button>
+      </div>
+      <div class="studio-out" id="studio-out">
+        <div class="empty small">
+          Pick a format. Studio uses whatever you last read, or a saved brief.
+        </div>
+      </div>
+    </section>
+
+    <!-- Editor (upcoming) -->
+    <section class="surface" id="s-editor" aria-label="Editor" hidden>
+      <div class="surface-head"><h2>Editor</h2><span class="src">Coming</span></div>
+      <div class="coming">
+        <p class="coming-lead">
+          A B-roll and real-footage editor, so a Studio script becomes a video
+          without leaving the workspace. Not built yet. Here is the shape of it.
+        </p>
+        <div class="tl" aria-hidden="true">
+          <div class="tl-track">
+            <span class="tl-label">Footage</span>
+            <span class="clip clip--a" style="width:22%"></span>
+            <span class="clip clip--a" style="width:31%"></span>
+            <span class="clip clip--a" style="width:18%"></span>
+          </div>
+          <div class="tl-track">
+            <span class="tl-label">B-roll</span>
+            <span class="clip clip--b" style="width:15%"></span>
+            <span class="clip clip--b" style="width:24%"></span>
+            <span class="clip clip--b" style="width:20%"></span>
+            <span class="clip clip--b" style="width:12%"></span>
+          </div>
+          <div class="tl-track">
+            <span class="tl-label">Voice</span>
+            <span class="clip clip--c" style="width:70%"></span>
+          </div>
+        </div>
+        <p class="coming-note">Preview of the layout only. No editing here yet.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- assistant -->
+  <aside class="assistant" id="assistant" aria-label="Assistant">
+    <div class="asst-head">
+      <span>Assistant</span>
+      <button id="clear" class="btn btn--ghost">Clear</button>
     </div>
     <div id="log" class="log" aria-live="polite"></div>
     <form id="composer" class="composer">
       <textarea id="input" rows="3" aria-label="Ask about what you're reading"
-                placeholder="Ask about what you're reading…"></textarea>
-      <button id="send">Send</button>
+                placeholder="Ask about what you're reading"></textarea>
+      <button id="send" class="btn btn--primary">Send</button>
     </form>
     <div class="usage" id="usage"></div>
-  </section>
+  </aside>
 
-</main>
+</div>
 
 <script src="/app.js"></script>
 </body>

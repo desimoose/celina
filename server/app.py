@@ -22,15 +22,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import finder  # noqa: E402
-import finder  # noqa: E402
 import gateway  # noqa: E402
+import paths  # noqa: E402
 import studio  # noqa: E402
 import tools  # noqa: E402
-
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WEB = os.path.join(ROOT, "web")
-WORKSPACE = os.path.join(ROOT, "workspace")
-PORT = int(os.environ.get("REVERIEBOT_PORT", "8765"))
 
 SYSTEM_PROMPT = (
     "You are the Reveriebot workspace agent: a private research assistant. "
@@ -40,9 +35,50 @@ SYSTEM_PROMPT = (
 )
 
 
+_ENV_TEMPLATE = """\
+# Fill in whichever keys you have. This file stays on this machine - the app
+# never sends keys anywhere except to the provider you select.
+# You need ZERO keys to start if you run Ollama locally.
+
+# --- Anthropic ---
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-opus-4-8
+
+# --- OpenAI ---
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4o
+
+# --- OpenRouter (one key, many open-weight models) ---
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct
+
+# --- xAI / Grok ---
+XAI_API_KEY=
+XAI_MODEL=grok-4
+
+# --- Ollama (local, no key needed; requires Ollama running) ---
+OLLAMA_MODEL=llama3.1:8b
+
+# --- Finder ---
+# Optional contact email. Unlocks Unpaywall and OpenAlex's faster polite pool.
+FINDER_CONTACT_EMAIL=
+
+# --- app ---
+REVERIEBOT_PORT=8765
+"""
+
+
+def seed_env(path):
+    """Write a starter .env if none exists. Never overwrites user edits."""
+    if not os.path.exists(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_ENV_TEMPLATE)
+
+
 def load_env():
     """Minimal .env reader - avoids a python-dotenv dependency."""
-    path = os.path.join(ROOT, ".env")
+    path = paths.env_file()
     if not os.path.isfile(path):
         return
     with open(path, "r", encoding="utf-8") as fh:
@@ -56,10 +92,10 @@ def load_env():
 
 def safe_workspace_path(rel):
     """Resolve a workspace-relative path, refusing anything that escapes it."""
-    target = os.path.realpath(os.path.join(WORKSPACE, rel))
-    if target != os.path.realpath(WORKSPACE) and not target.startswith(
-        os.path.realpath(WORKSPACE) + os.sep
-    ):
+    ws = paths.workspace_dir()
+    target = os.path.realpath(os.path.join(ws, rel))
+    root = os.path.realpath(ws)
+    if target != root and not target.startswith(root + os.sep):
         raise ValueError("path escapes the workspace")
     return target
 
@@ -226,12 +262,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _list_workspace(self):
         out = []
-        for dirpath, _dirs, names in os.walk(WORKSPACE):
+        ws = paths.workspace_dir()
+        for dirpath, _dirs, names in os.walk(ws):
             for name in sorted(names):
                 if name.startswith("."):
                     continue
                 full = os.path.join(dirpath, name)
-                rel = os.path.relpath(full, WORKSPACE).replace(os.sep, "/")
+                rel = os.path.relpath(full, ws).replace(os.sep, "/")
                 out.append({
                     "path": rel,
                     "name": name,
@@ -242,8 +279,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _serve_static(self, route):
         rel = "index.html" if route in ("/", "") else route.lstrip("/")
-        target = os.path.realpath(os.path.join(WEB, rel))
-        web_root = os.path.realpath(WEB)
+        web_root = os.path.realpath(paths.web_dir())
+        target = os.path.realpath(os.path.join(web_root, rel))
         if not (target == web_root or target.startswith(web_root + os.sep)):
             return self._send(403, {"error": "forbidden"})
         if not os.path.isfile(target):
@@ -253,19 +290,30 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, fh.read(), ctype)
 
 
-def main():
+def make_server(port=None, host="127.0.0.1"):
+    """Build a bound (not-yet-serving) server. port=0 picks a free port;
+    read it back from the returned server's .server_address[1]."""
+    seed_env(paths.env_file())
     load_env()
-    os.makedirs(WORKSPACE, exist_ok=True)
+    os.makedirs(paths.workspace_dir(), exist_ok=True)
+    if port is None:
+        port = int(os.environ.get("REVERIEBOT_PORT", "8765"))
+    return ThreadingHTTPServer((host, port), Handler)
+
+
+def main():
+    srv = make_server()
+    port = srv.server_address[1]
 
     ready = [p["id"] for p in gateway.available() if p["ready"]]
     present = [t["id"] for t in tools.status() if t["present"]]
 
     print("\n  Reveriebot")
-    print(f"  http://localhost:{PORT}")
+    print(f"  http://localhost:{port}")
     print(f"  providers ready : {', '.join(ready) or 'none - add a key to .env'}")
     print(f"  tools detected  : {', '.join(present) or 'none (optional)'}\n")
 
-    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    srv.serve_forever()
 
 
 if __name__ == "__main__":

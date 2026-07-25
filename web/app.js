@@ -4,6 +4,9 @@ const $ = (id) => document.getElementById(id);
 
 const state = {
   provider: "anthropic",
+  providerManual: false,
+  providers: [],
+  tools: [],
   view: "work",
   history: [],
   viewing: null,       // { title, text } in the reader
@@ -29,38 +32,88 @@ async function boot() {
   await loadFiles();
   wireNav();
   wireSettings();
+  wireWelcome();
+  maybeWelcome();
 }
 
 async function refreshConfig() {
   try {
     const cfg = await fetch("/api/config").then((r) => r.json());
-    renderProviders(cfg.providers);
-    renderTools(cfg.tools);
+    state.providers = cfg.providers || [];
+    state.tools = cfg.tools || [];
   } catch {
-    $("tools").innerHTML = '<span class="chip">server unreachable</span>';
+    state.providers = [];
+    state.tools = [];
+  }
+  pickProvider();
+}
+
+// Auto-pick the active AI. A connected (keyed) provider is preferred over a
+// local one, since a keyed provider is what the user deliberately set up - but
+// an explicit manual choice in Settings always wins. No visible rail control.
+function pickProvider() {
+  const ready = state.providers.filter((p) => p.ready);
+  const currentReady = ready.find((p) => p.id === state.provider);
+  if (state.providerManual && currentReady) return;
+  const connected = state.providers.find((p) => !p.local && p.ready);
+  if (connected) { state.provider = connected.id; return; }
+  if (!currentReady) state.provider = (ready[0] || {}).id || state.provider;
+}
+
+// A keyed (non-local) provider is connected.
+function isConnected() {
+  return state.providers.some((p) => !p.local && p.ready);
+}
+
+// ---------- first-run welcome ----------
+
+function wireWelcome() {
+  $("wl-connect-go").addEventListener("click", () => wlStep("connect"));
+  $("wl-skip").addEventListener("click", closeWelcome);
+  $("wl-back").addEventListener("click", () => wlStep("intro"));
+  $("wl-getkey").addEventListener("click", () => openExternal("https://openrouter.ai/keys"));
+  $("wl-connect").addEventListener("click", wlConnect);
+  $("wl-finish").addEventListener("click", () => { closeWelcome(); $("url").focus(); });
+}
+
+function maybeWelcome() {
+  if (!isConnected()) { wlStep("intro"); $("welcome").hidden = false; }
+}
+
+function wlStep(step) {
+  for (const s of document.querySelectorAll("#welcome .wl-step")) {
+    s.hidden = s.dataset.step !== step;
   }
 }
 
-function renderProviders(providers) {
-  const sel = $("provider");
-  sel.innerHTML = "";
-  let firstReady = null;
-  for (const p of providers) {
-    const opt = document.createElement("option");
-    opt.value = p.id;
-    opt.textContent = p.ready ? `${p.label}` : `${p.label} (no key)`;
-    opt.disabled = !p.ready;
-    if (p.ready && !firstReady) firstReady = p.id;
-    sel.appendChild(opt);
+async function wlConnect() {
+  const key = $("wl-key").value.trim();
+  if (!key) { $("wl-msg").textContent = "Paste your key first."; return; }
+  $("wl-msg").textContent = "Connecting...";
+  try {
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keys: { OPENROUTER_API_KEY: key } }),
+    }).then((r) => r.json());
+    if (res.error) { $("wl-msg").textContent = res.error; return; }
+    await refreshConfig();
+    if (isConnected()) wlStep("done");
+    else $("wl-msg").textContent = "That key did not connect. Check it and try again.";
+  } catch (e) {
+    $("wl-msg").textContent = "Could not connect: " + e.message;
   }
-  if (firstReady) { sel.value = firstReady; state.provider = firstReady; }
-  sel.onchange = () => { state.provider = sel.value; };
 }
 
-function renderTools(tools) {
-  $("tools").innerHTML = tools
-    .map((t) => `<span class="chip ${t.present ? "on" : ""}" title="${escapeHtml(t.detail)}">${escapeHtml(t.label)}</span>`)
-    .join("");
+function closeWelcome() { $("welcome").hidden = true; }
+
+// Open an external link in the system browser (desktop) or a new tab (dev).
+function openExternal(url) {
+  if (window.pywebview && window.pywebview.api && window.pywebview.api.open_external) {
+    window.pywebview.api.open_external(url);
+  } else {
+    window.open(url, "_blank", "noopener");
+  }
 }
 
 // ---------- settings ----------
@@ -99,12 +152,29 @@ async function openSettings() {
                placeholder="model: ${escapeHtml(p.model)}" />
       </div>`;
   }).join("");
-  $("settings-body").innerHTML = rows + `
+  const ready = state.providers.filter((p) => p.ready);
+  const whichAI = `
+    <div class="set-row">
+      <div class="set-label">Which AI answers</div>
+      <select id="set-provider" class="set-select">
+        ${ready.map((p) => `<option value="${p.id}"${p.id === state.provider ? " selected" : ""}>${escapeHtml(p.label)}${p.local ? " (local)" : ""}</option>`).join("")}
+      </select>
+    </div>`;
+  const toolsStatus = `
+    <div class="set-row">
+      <div class="set-label">Connected tools</div>
+      <div class="set-tools">
+        ${state.tools.map((t) => `<span class="set-tool${t.present ? " on" : ""}">${escapeHtml(t.label)} &middot; ${t.present ? "connected" : "not found"}</span>`).join("")}
+      </div>
+    </div>`;
+  $("settings-body").innerHTML = whichAI + toolsStatus + rows + `
     <div class="set-row">
       <div class="set-label">Finder contact email</div>
       <input type="text" id="set-finder" placeholder="you@example.com"
              value="${escapeHtml(data.finder_email || "")}" />
     </div>`;
+  const sp = $("set-provider");
+  if (sp) sp.addEventListener("change", () => { state.provider = sp.value; state.providerManual = true; });
   settingsInitial = { finder: data.finder_email || "" };
   for (const btn of document.querySelectorAll("#settings-body .set-clear")) {
     btn.addEventListener("click", () => {

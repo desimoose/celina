@@ -26,5 +26,27 @@ class StartServerTest(unittest.TestCase):
             srv.server_close()
 
 
+class ApiTest(unittest.TestCase):
+    def test_open_external_only_http(self):
+        import webbrowser
+
+        import desktop
+        calls = []
+        orig = webbrowser.open
+        webbrowser.open = lambda u: calls.append(u)
+        try:
+            api = desktop.Api()
+            self.assertTrue(api.open_external("https://openrouter.ai/keys"))
+            self.assertTrue(api.open_external("http://example.com"))
+            self.assertFalse(api.open_external("file:///etc/passwd"))
+            self.assertFalse(api.open_external("javascript:alert(1)"))
+            self.assertFalse(api.open_external(123))
+            self.assertEqual(
+                calls, ["https://openrouter.ai/keys", "http://example.com"]
+            )
+        finally:
+            webbrowser.open = orig
+
+
 if __name__ == "__main__":
     unittest.main()

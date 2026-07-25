@@ -11,10 +11,22 @@ Frozen exe:       Reveriebot.exe   (built via reveriebot.spec / build.ps1)
 import os
 import sys
 import threading
+import webbrowser
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import app  # noqa: E402
+
+
+class Api:
+    """Exposed to the page as window.pywebview.api. Opens external links in the
+    system browser so they never replace the app window."""
+
+    def open_external(self, url):
+        if isinstance(url, str) and url.startswith(("http://", "https://")):
+            webbrowser.open(url)
+            return True
+        return False
 
 
 def start_server():
@@ -36,7 +48,8 @@ def run():
         width=1280,
         height=820,
         min_size=(940, 600),
-        background_color="#0B0F19",
+        background_color="#FFF8F6",
+        js_api=Api(),
     )
     webview.start()
 

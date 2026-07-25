@@ -79,6 +79,35 @@ def key_for(provider):
     return os.environ.get(spec["key_env"], "").strip() or None
 
 
+def key_hint(provider):
+    """Last 4 chars of the key, or None if absent / too short to mask safely."""
+    key = key_for(provider)
+    if not key or len(key) < 8:
+        return None
+    return key[-4:]
+
+
+def settings_state():
+    """Per-provider config for the settings UI. Never includes full keys."""
+    out = []
+    for name, spec in PROVIDERS.items():
+        out.append({
+            "id": name,
+            "label": spec["label"],
+            "local": spec["key_env"] is None,
+            "key_env": spec["key_env"],
+            "model_env": spec["model_env"],
+            "has_key": bool(key_for(name)),
+            "key_hint": key_hint(name),
+            "model": model_for(name),
+            "default_model": spec["default_model"],
+            "model_overridden": bool(
+                os.environ.get(spec["model_env"], "").strip()
+            ),
+        })
+    return out
+
+
 def available():
     """Which providers are usable right now. Ollama is local, so it is always
     offered - we cannot know if the daemon is up without paying for a probe."""

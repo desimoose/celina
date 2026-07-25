@@ -1,0 +1,6 @@
+Manrope typeface (c) 2018-2024 Mikhail Sharanda, Mirko Velimirovic.
+Licensed under the SIL Open Font License, Version 1.1.
+https://github.com/sharanda/manrope  -  https://scripts.sil.org/OFL
+
+These woff2 files are bundled and served locally so the app never requests
+fonts from a remote server (privacy). Redistribution is permitted under OFL.

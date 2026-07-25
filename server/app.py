@@ -27,6 +27,8 @@ import paths  # noqa: E402
 import studio  # noqa: E402
 import tools  # noqa: E402
 
+mimetypes.add_type("font/woff2", ".woff2")  # bundled local fonts
+
 SYSTEM_PROMPT = (
     "You are the Reveriebot workspace agent: a private research assistant. "
     "You help investigate topics using the notebook's collected sources. "

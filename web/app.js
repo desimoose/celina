@@ -25,6 +25,13 @@ const looksLikeUrl = (s) => /^https?:\/\//i.test(s);
 // ---------- boot ----------
 
 async function boot() {
+  await refreshConfig();
+  await loadFiles();
+  wireNav();
+  wireSettings();
+}
+
+async function refreshConfig() {
   try {
     const cfg = await fetch("/api/config").then((r) => r.json());
     renderProviders(cfg.providers);
@@ -32,8 +39,6 @@ async function boot() {
   } catch {
     $("tools").innerHTML = '<span class="chip">server unreachable</span>';
   }
-  await loadFiles();
-  wireNav();
 }
 
 function renderProviders(providers) {
@@ -56,6 +61,98 @@ function renderTools(tools) {
   $("tools").innerHTML = tools
     .map((t) => `<span class="chip ${t.present ? "on" : ""}" title="${escapeHtml(t.detail)}">${escapeHtml(t.label)}</span>`)
     .join("");
+}
+
+// ---------- settings ----------
+
+let settingsInitial = null;  // { finder }
+
+function wireSettings() {
+  $("settings-open").addEventListener("click", openSettings);
+  $("settings-close").addEventListener("click", closeSettings);
+  $("settings-cancel").addEventListener("click", closeSettings);
+  $("settings-save").addEventListener("click", saveSettings);
+  $("settings").addEventListener("click", (e) => {
+    if (e.target.id === "settings") closeSettings();   // scrim click
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("settings").hidden) closeSettings();
+  });
+}
+
+async function openSettings() {
+  const data = await fetch("/api/settings").then((r) => r.json());
+  const rows = data.providers.map((p) => {
+    const clearBtn = (!p.local && p.has_key)
+      ? `<button type="button" class="set-clear" data-clear-for="${p.key_env}">Clear</button>` : "";
+    const keyField = p.local ? "" : `
+      <div class="set-key">
+        <input type="password" autocomplete="off" data-key="${p.key_env}"
+               placeholder="${p.has_key ? "set (····" + (p.key_hint || "") + ")" : "not set"}" />
+        ${clearBtn}
+      </div>`;
+    return `
+      <div class="set-row">
+        <div class="set-label"><span class="set-dot ${p.has_key || p.local ? "on" : ""}"></span>${escapeHtml(p.label)}${p.local ? " (local, no key)" : ""}</div>
+        ${keyField}
+        <input class="set-model" type="text" data-model="${p.model_env}"
+               placeholder="model: ${escapeHtml(p.model)}" />
+      </div>`;
+  }).join("");
+  $("settings-body").innerHTML = rows + `
+    <div class="set-row">
+      <div class="set-label">Finder contact email</div>
+      <input type="text" id="set-finder" placeholder="you@example.com"
+             value="${escapeHtml(data.finder_email || "")}" />
+    </div>`;
+  settingsInitial = { finder: data.finder_email || "" };
+  for (const btn of document.querySelectorAll("#settings-body .set-clear")) {
+    btn.addEventListener("click", () => {
+      const input = document.querySelector(`input[data-key="${btn.dataset.clearFor}"]`);
+      const armed = input.dataset.clear === "1";
+      input.dataset.clear = armed ? "" : "1";
+      input.value = "";
+      input.disabled = !armed;
+      input.classList.toggle("cleared", !armed);
+      btn.classList.toggle("armed", !armed);
+      btn.textContent = armed ? "Clear" : "Undo";
+    });
+  }
+  $("settings-msg").textContent = "";
+  $("settings").hidden = false;
+}
+
+async function saveSettings() {
+  const keys = {}, models = {};
+  for (const el of document.querySelectorAll("#settings-body input[data-key]")) {
+    if (el.dataset.clear === "1") keys[el.dataset.key] = "";      // armed Clear
+    else if (el.value !== "") keys[el.dataset.key] = el.value;    // replace
+  }
+  for (const el of document.querySelectorAll("#settings-body input[data-model]")) {
+    if (el.value !== "") models[el.dataset.model] = el.value;
+  }
+  const body = { keys, models };
+  const finder = $("set-finder").value;
+  if (finder !== settingsInitial.finder) body.finder_email = finder;
+
+  $("settings-msg").textContent = "Saving...";
+  try {
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => r.json());
+    if (res.error) { $("settings-msg").textContent = res.error; return; }
+    await refreshConfig();   // provider readiness updates immediately
+    closeSettings();
+  } catch (e) {
+    $("settings-msg").textContent = "Could not save: " + e.message;
+  }
+}
+
+function closeSettings() {
+  $("settings").hidden = true;
+  $("settings-body").innerHTML = "";
 }
 
 // ---------- navigation ----------

@@ -25,6 +25,35 @@ either a key in `.env`, or Ollama running locally for a fully offline setup:
 copy .env.example .env
 ```
 
+## Desktop app (Windows)
+
+Reveriebot also runs as a native window, no browser and no terminal.
+
+Run from source (dev):
+
+```bash
+python server/app.py        # browser at http://localhost:8765
+python server/desktop.py    # native window (needs: pip install -r requirements-desktop.txt)
+```
+
+Build the single-file exe:
+
+```powershell
+powershell -File build.ps1   # produces dist\Reveriebot.exe
+```
+
+The packaged app keeps your data in `Documents\Reveriebot\`:
+
+```
+Documents\Reveriebot\
+  .env         your API keys (seeded on first run; edit to add keys)
+  workspace\   saved briefs, papers, drafts
+  vendor\      drop Obscura here (vendor\obscura\obscura.exe) for full-text reads
+```
+
+Prerequisite on other machines: the Microsoft Edge WebView2 runtime (standard
+on Windows 11).
+
 ## Model backends
 
 Five, behind one gateway. Switch between them from the dropdown in the top
@@ -66,11 +95,14 @@ The script asks before downloading anything and tells you the size first.
 ```
 server/
   app.py       stdlib HTTP server + JSON API
+  desktop.py   native-window entry point (pywebview)
+  paths.py     frozen-aware paths (bundled assets vs. user data)
   gateway.py   the five-backend LLM router
   tools.py     optional-tool detection, page fetch + text extraction
-web/           the three-pane UI (no build step)
+web/           the workspace UI (no build step)
 workspace/     saved artifacts — gitignored, yours
 vendor/        third-party binaries — gitignored
+reveriebot.spec  PyInstaller build config (dist\Reveriebot.exe)
 ```
 
 ## Privacy
@@ -87,5 +119,8 @@ cannot script against the app.
 Working: the three-pane UI, the five-backend gateway, URL fetch with Obscura
 preferred, artifact save and reload, context-aware chat over whatever is open.
 
-Next: wire Agent-Reach and last30days as real research actions, then package
-the whole thing as a Tauri desktop app.
+Packaged: a single-file Windows app (`build.ps1` -> `dist\Reveriebot.exe`) with
+a native window over the local server, keeping your data in `Documents\Reveriebot\`.
+
+Next: wire Agent-Reach and last30days as real research actions, and grow the
+workspace into project folders on disk.

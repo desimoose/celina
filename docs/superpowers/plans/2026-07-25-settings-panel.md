@@ -537,6 +537,13 @@ Append to `web/styles.css`:
   font:inherit; }
 .set-row input:focus { outline:1px solid var(--act); border-color:var(--act); }
 .set-row .set-model { font-size:12px; }
+.set-key { display:flex; gap:8px; align-items:center; }
+.set-key input { flex:1; }
+.set-clear { background:transparent; border:1px solid var(--line); color:var(--muted);
+  border-radius:var(--radius); padding:6px 10px; font:inherit; font-size:12px; cursor:pointer; }
+.set-clear:hover { color:var(--fg); border-color:var(--muted); }
+.set-clear.armed { color:var(--fg); border-color:var(--act); }
+.set-row input.cleared { opacity:.5; }
 @media (prefers-reduced-motion: no-preference) {
   .modal-card { animation: popin .18s ease-out; }
   @keyframes popin { from { opacity:0; transform:translateY(6px) scale(.98); }
@@ -599,9 +606,14 @@ function wireSettings() {
 async function openSettings() {
   const data = await fetch("/api/settings").then((r) => r.json());
   const rows = data.providers.map((p) => {
+    const clearBtn = (!p.local && p.has_key)
+      ? `<button type="button" class="set-clear" data-clear-for="${p.key_env}">Clear</button>` : "";
     const keyField = p.local ? "" : `
-      <input type="password" autocomplete="off" data-key="${p.key_env}"
-             placeholder="${p.has_key ? "set (····" + (p.key_hint || "") + ")" : "not set"}" />`;
+      <div class="set-key">
+        <input type="password" autocomplete="off" data-key="${p.key_env}"
+               placeholder="${p.has_key ? "set (····" + (p.key_hint || "") + ")" : "not set"}" />
+        ${clearBtn}
+      </div>`;
     return `
       <div class="set-row">
         <div class="set-label"><span class="set-dot ${p.has_key || p.local ? "on" : ""}"></span>${escapeHtml(p.label)}${p.local ? " (local, no key)" : ""}</div>
@@ -617,6 +629,19 @@ async function openSettings() {
              value="${escapeHtml(data.finder_email || "")}" />
     </div>`;
   settingsInitial = { finder: data.finder_email || "" };
+  // wire per-key Clear buttons: arm/disarm clearing this key on save
+  for (const btn of document.querySelectorAll("#settings-body .set-clear")) {
+    btn.addEventListener("click", () => {
+      const input = document.querySelector(`input[data-key="${btn.dataset.clearFor}"]`);
+      const armed = input.dataset.clear === "1";
+      input.dataset.clear = armed ? "" : "1";
+      input.value = "";
+      input.disabled = !armed;
+      input.classList.toggle("cleared", !armed);
+      btn.classList.toggle("armed", !armed);
+      btn.textContent = armed ? "Clear" : "Undo";
+    });
+  }
   $("settings-msg").textContent = "";
   $("settings").hidden = false;
 }
@@ -624,7 +649,8 @@ async function openSettings() {
 async function saveSettings() {
   const keys = {}, models = {};
   for (const el of document.querySelectorAll("#settings-body input[data-key]")) {
-    if (el.value !== "") keys[el.dataset.key] = el.value;
+    if (el.dataset.clear === "1") keys[el.dataset.key] = "";      // armed Clear
+    else if (el.value !== "") keys[el.dataset.key] = el.value;    // replace
   }
   for (const el of document.querySelectorAll("#settings-body input[data-model]")) {
     if (el.value !== "") models[el.dataset.model] = el.value;
@@ -656,9 +682,10 @@ function closeSettings() {
 
 Rationale for "changed fields only": a `password` input left blank means "no
 change"; a filled one replaces. A model input left blank means "no change".
-Clearing a key from the UI is deferred (out of scope) since a blank field is
-already overloaded as "leave as is"; clearing is still possible by editing the
-`.env` file. This matches the spec's "only fields present are touched".
+Clearing is explicit: each key with a value gets a **Clear** button that arms
+"send empty string" for that key on save (toggles to Undo). This avoids the
+footgun of "blank = wipe" while still letting the user remove a bad key from
+the UI. Only touched fields are sent.
 
 - [ ] **Step 5: Verify wiring without a build (handlers fire)**
 
@@ -732,5 +759,4 @@ Task 4 rendering (`p.key_env`, `p.has_key`, `p.key_hint`, `p.model_env`,
 
 ## Out of scope (per spec)
 
-- Clearing a key from the UI (blank = no change); edit `.env` to clear.
 - Keychain/DPAPI encryption; first-run wizard; editing `REVERIEBOT_PORT`.

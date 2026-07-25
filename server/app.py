@@ -179,6 +179,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send(400, {"error": str(e)})
 
+        if route == "/api/settings":
+            return self._get_settings()
+
         return self._serve_static(route)
 
     def do_POST(self):
@@ -198,6 +201,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._studio(payload)
         if route == "/api/workspace/save":
             return self._save(payload)
+        if route == "/api/settings":
+            return self._save_settings(payload)
         return self._send(404, {"error": "no such endpoint"})
 
     # --- handlers ------------------------------------------------------
@@ -290,6 +295,44 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"saved": rel})
         except Exception as e:
             return self._send(400, {"error": str(e)})
+
+    def _get_settings(self):
+        return self._send(200, {
+            "providers": gateway.settings_state(),
+            "finder_email": os.environ.get("FINDER_CONTACT_EMAIL", ""),
+        })
+
+    def _save_settings(self, payload):
+        key_envs = {s["key_env"] for s in gateway.PROVIDERS.values() if s["key_env"]}
+        model_envs = {s["model_env"] for s in gateway.PROVIDERS.values()}
+
+        updates = {}
+        try:
+            for env, val in (payload.get("keys") or {}).items():
+                if env in key_envs:
+                    if not isinstance(val, str):
+                        raise ValueError("key values must be strings")
+                    updates[env] = val.strip()
+            for env, val in (payload.get("models") or {}).items():
+                if env in model_envs:
+                    if not isinstance(val, str):
+                        raise ValueError("model values must be strings")
+                    updates[env] = val.strip()
+            if "finder_email" in payload:
+                val = payload["finder_email"]
+                if not isinstance(val, str):
+                    raise ValueError("finder_email must be a string")
+                updates["FINDER_CONTACT_EMAIL"] = val.strip()
+        except ValueError as e:
+            return self._send(400, {"error": str(e)})
+
+        try:
+            if updates:
+                update_env(updates)
+        except Exception as e:
+            return self._send(500, {"error": f"could not write settings: {e}"})
+
+        return self._get_settings()
 
     def _list_workspace(self):
         out = []

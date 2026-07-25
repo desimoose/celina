@@ -90,6 +90,37 @@ def load_env():
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
+def update_env(updates):
+    """Set KEY=value pairs in the .env file (in place) and in os.environ.
+    Empty string clears a key. Comments, blanks, order, and unrelated keys
+    are preserved. New keys are appended."""
+    path = paths.env_file()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    existing = []
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as fh:
+            existing = fh.read().splitlines()
+
+    remaining = dict(updates)
+    out = []
+    for line in existing:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in remaining:
+                out.append(f"{key}={remaining.pop(key)}")
+                continue
+        out.append(line)
+    for key, value in remaining.items():
+        out.append(f"{key}={value}")
+
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(out) + "\n")
+
+    for key, value in updates.items():
+        os.environ[key] = value
+
+
 def safe_workspace_path(rel):
     """Resolve a workspace-relative path, refusing anything that escapes it."""
     ws = paths.workspace_dir()

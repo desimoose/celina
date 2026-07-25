@@ -19,6 +19,7 @@ import urllib.parse
 import urllib.request
 
 import pdf
+import paths
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VENDOR = os.path.join(ROOT, "vendor")
@@ -35,7 +36,10 @@ def _first_existing(*paths):
 
 
 def find_obscura():
+    vend = paths.vendor_dir()
     return _first_existing(
+        os.path.join(vend, "obscura", "obscura.exe"),
+        os.path.join(vend, "obscura.exe"),
         os.path.join(VENDOR, "obscura", "obscura.exe"),
         os.path.join(VENDOR, "obscura.exe"),
     ) or shutil.which("obscura")

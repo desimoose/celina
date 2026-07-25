@@ -289,7 +289,7 @@ async function openArtifact(file) {
   state.viewing = { title: file.name, text: data.content };
   state.results = null;
   $("url").value = "";
-  setEngine(`artifact · ${file.name}`);
+  setEngine(`Kept · ${file.name}`);
   if (file.kind === "html") {
     const frame = document.createElement("iframe");
     frame.setAttribute("sandbox", "");
@@ -298,6 +298,7 @@ async function openArtifact(file) {
   } else {
     showText(data.content);
   }
+  $("view").prepend(makeBar());   // orientation: one obvious next action
   $("save").disabled = true;
   updateStudioSrc();
   nav("work");
@@ -309,6 +310,21 @@ function showText(text) {
   const pre = document.createElement("pre");
   pre.textContent = text;
   $("view").replaceChildren(pre);
+}
+
+// The one obvious next action once you have something in hand.
+function makeBar() {
+  const bar = document.createElement("div");
+  bar.className = "next-step";
+  const btn = document.createElement("button");
+  btn.className = "btn btn--primary";
+  btn.textContent = "Make something";
+  btn.onclick = () => nav("studio");
+  const hint = document.createElement("span");
+  hint.className = "hint";
+  hint.textContent = "Turn this into a post, a script, or an episode.";
+  bar.append(btn, hint);
+  return bar;
 }
 function setEngine(msg) { $("engine").textContent = msg || ""; }
 
@@ -327,10 +343,8 @@ async function openUrl() {
     state.activeFile = null;
     state.results = null;
     showText(data.text);
-    setEngine(
-      `${data.engine.startsWith("obscura") ? "via Obscura" : "plain fetch"} · ` +
-      `${data.text.length.toLocaleString()} chars${data.note ? " · " + data.note : ""}`
-    );
+    $("view").prepend(makeBar());
+    setEngine("Read privately" + (data.note ? " · " + data.note : ""));
     $("save").disabled = false;
     updateStudioSrc();
   } catch (e) {
@@ -346,7 +360,7 @@ async function findPapers() {
   const q = $("url").value.trim();
   if (!q) return;
   if (looksLikeUrl(q)) return openUrl();
-  setEngine("searching open-access sources…");
+  setEngine("Finding real sources…");
   $("find").disabled = true;
   try {
     const data = await fetch("/api/explore", {
@@ -357,8 +371,7 @@ async function findPapers() {
     data.query = data.query || q;
     renderResults(data);
     const n = data.results.length;
-    setEngine(`${n} result${n === 1 ? "" : "s"} · open-access first` +
-      (data.notes && data.notes.length ? " · " + data.notes.join(" · ") : ""));
+    setEngine(`${n} source${n === 1 ? "" : "s"} found`);
   } catch (e) {
     setEngine("search failed: " + e.message);
   } finally {
@@ -379,17 +392,17 @@ function renderResults(data) {
   const note = document.createElement("div");
   if (data.answer) {
     note.className = "answer";
-    note.innerHTML = `<div class="answer-head">grounded answer<span class="meta">${escapeHtml((data.provider || "") + " " + (data.model || ""))}</span></div>`;
+    note.innerHTML = `<div class="answer-head">Answer<span class="meta">${escapeHtml((data.provider || "") + " " + (data.model || ""))}</span></div>`;
     const body = document.createElement("div");
     body.className = "answer-body";
     body.textContent = data.answer;
     note.appendChild(body);
   } else if (data.answer_error) {
     note.className = "answer note";
-    note.textContent = "No grounded answer: " + data.answer_error + " — the papers below still stand.";
+    note.textContent = "Could not write an answer: " + data.answer_error + " — the sources below still stand.";
   } else {
     note.className = "answer note";
-    note.textContent = "Add a model key for a grounded answer. The papers below are real regardless.";
+    note.textContent = "Connect an AI in Settings for a written answer. The sources below are real regardless.";
   }
   wrap.appendChild(note);
 
@@ -540,7 +553,7 @@ async function saveCurrent() {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ path: `${stamp}-${slugify(title)}.md`, content }),
   }).then((r) => r.json());
-  setEngine(res.error ? "save failed: " + res.error : "saved to Library");
+  setEngine(res.error ? "Could not keep it: " + res.error : "Kept — find it in Library");
   $("save").disabled = true;
   loadFiles();
 }
@@ -591,6 +604,7 @@ $("find").onclick = findPapers;
 $("go").onclick = openUrl;
 $("url").addEventListener("keydown", (e) => { if (e.key === "Enter") findPapers(); });
 $("save").onclick = saveCurrent;
+$("example-q").onclick = () => { $("url").value = "does caffeine affect sleep?"; findPapers(); };
 $("refresh").onclick = loadFiles;
 document.querySelectorAll(".fmt").forEach((b) => { b.onclick = () => generate(b.dataset.fmt, b); });
 $("composer").addEventListener("submit", send);

@@ -51,19 +51,22 @@
         <div class="field">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input id="url" type="text" spellcheck="false"
-                 aria-label="Search open-access papers, or paste a URL to read"
-                 placeholder="Search open-access papers, or paste a URL to read" />
+                 aria-label="Ask anything, or paste a link to read"
+                 placeholder="Ask anything, or paste a link to read" />
         </div>
         <button id="find" class="btn btn--primary">Search</button>
-        <button id="go" class="btn btn--ghost">Open URL</button>
-        <button id="save" class="btn btn--ghost" disabled>Save</button>
+        <button id="go" class="btn btn--ghost">Read a link</button>
+        <button id="save" class="btn btn--primary" disabled>Keep this</button>
         <div class="status" id="engine" aria-live="polite"></div>
       </div>
       <div class="view" id="view">
         <div class="empty">
-          <h1>Find the source. Read it. Make something.</h1>
-          <p>Search open-access papers, read the full text privately through a
-             stealth browser, then turn what you find into content in the Studio.</p>
+          <h1>Ask anything.<br>Make <span class="accent">something</span>.</h1>
+          <p>Type a question. Reveriebot finds real sources, answers you plainly,
+             and helps you turn it into something to post.</p>
+          <div class="example">
+            <button class="example-chip" id="example-q">Try: does caffeine affect sleep?</button>
+          </div>
         </div>
       </div>
     </section>
@@ -76,7 +79,8 @@
       </div>
       <ul id="files" class="lib"></ul>
       <p class="empty-note" id="ws-empty">
-        Nothing kept yet. Save a brief, a paper, or a Studio draft and it lands here.
+        Nothing kept yet. When an answer is worth building on, press Keep this and
+        it lands here, ready to turn into something.
       </p>
     </section>
 
@@ -150,7 +154,7 @@
   <!-- assistant -->
   <aside class="assistant" id="assistant" aria-label="Assistant">
     <div class="asst-head">
-      <span>Assistant</span>
+      <span>Ask about this</span>
       <button id="clear" class="btn btn--ghost">Clear</button>
     </div>
     <div id="log" class="log" aria-live="polite"></div>

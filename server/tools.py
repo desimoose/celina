@@ -116,6 +116,32 @@ def _fetch_obscura(binary, url, timeout=30):
     return _BLANKS.sub("\n\n", out)
 
 
+def obscura_dump(url, dump="html", stealth=True, timeout=30):
+    """Raw Obscura dump for the Scanner: return stdout as text.
+
+    dump="html"     -> stealth browser render, raw HTML (parse search results)
+    dump="original" -> straight GET through Obscura's TLS (RSS/JSON feeds)
+    Raises on non-zero exit or empty output.
+    """
+    binary = find_obscura()
+    if not binary:
+        raise RuntimeError("obscura not available")
+    args = [binary]
+    if stealth:
+        args.append("--stealth")
+    args += ["fetch", "--dump", dump, "--timeout", str(timeout), url]
+    # Capture bytes and decode utf-8 ourselves: on Windows, text-mode capture can
+    # mangle multibyte chars (curly quotes in RSS) via the console codepage.
+    proc = subprocess.run(args, capture_output=True, timeout=timeout + 60)
+    if proc.returncode != 0:
+        err = (proc.stderr or b"").decode("utf-8", "replace").strip()
+        raise RuntimeError(err[:300] or "obscura exited non-zero")
+    out = (proc.stdout or b"").decode("utf-8", "replace").strip()
+    if not out:
+        raise RuntimeError("empty dump")
+    return out
+
+
 def _looks_like_pdf_url(url):
     path = urllib.parse.urlparse(url).path.lower()
     return path.endswith(".pdf") or "/pdf/" in path

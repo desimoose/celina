@@ -406,35 +406,40 @@ function renderResults(data) {
   }
   wrap.appendChild(note);
 
+  const KIND = { research: "Research", web: "Web", news: "Recent", wikipedia: "Wikipedia" };
   data.results.forEach((r, i) => {
     const el = document.createElement("div");
     el.className = "paper";
     const authors = r.authors || [];
     const who = authors.slice(0, 3).join(", ") + (authors.length > 3 ? " et al." : "");
     const meta = [who, r.year, r.venue, r.cited_by != null ? `cited by ${r.cited_by}` : null, r.source].filter(Boolean).join(" · ");
-    el.innerHTML = `<div class="paper-title">[${i + 1}] ${escapeHtml(r.title || "untitled")}</div><div class="paper-meta">${escapeHtml(meta)}</div>`;
+    const tag = r.kind ? `<span class="kind kind--${r.kind}">${KIND[r.kind] || r.kind}</span>` : "";
+    el.innerHTML = `<div class="paper-title">${tag}${escapeHtml(r.title || "untitled")}</div>` +
+      (meta ? `<div class="paper-meta">${escapeHtml(meta)}</div>` : "");
     const actions = document.createElement("div");
     actions.className = "paper-actions";
-    if (r.oa_url) {
+    // Anything with a readable link gets a Read button (Obscura reads it).
+    const readable = r.oa_url || r.url;
+    if (readable) {
       const read = document.createElement("button");
       read.className = "btn btn--ghost";
-      read.textContent = "Read full text";
-      read.onclick = () => { $("url").value = r.oa_url; openUrl(); };
+      read.textContent = "Read";
+      read.onclick = () => { $("url").value = readable; openUrl(); };
       actions.appendChild(read);
     }
-    const link = r.oa_url || r.url;
+    const link = r.url || r.oa_url;
     if (link) {
       const a = document.createElement("a");
       a.href = link; a.target = "_blank"; a.rel = "noopener";
-      a.className = "paper-link";
-      a.textContent = r.oa_url ? "open access ↗" : "link ↗";
+      a.className = "paper-link" + (r.oa_url ? " oa" : "");
+      a.textContent = r.oa_url ? "open access ↗" : "open ↗";
       actions.appendChild(a);
     }
     el.appendChild(actions);
-    if (r.abstract) {
+    if (r.abstract || r.snippet) {
       const ab = document.createElement("div");
       ab.className = "paper-abstract";
-      ab.textContent = r.abstract;
+      ab.textContent = r.abstract || r.snippet;
       el.appendChild(ab);
     }
     wrap.appendChild(el);

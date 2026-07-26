@@ -5,7 +5,7 @@ from PyInstaller.utils.hooks import collect_all
 datas = [("web", "web")]          # bundle the UI; resource_path("web") finds it
 binaries = []
 hiddenimports = [
-    "finder", "gateway", "studio", "tools", "pdf", "paths", "app",
+    "finder", "gateway", "studio", "tools", "pdf", "paths", "app", "scanner",
 ]
 
 # pywebview + its .NET bridge need their data/binaries/submodules collected.

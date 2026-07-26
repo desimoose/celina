@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import finder  # noqa: E402
 import gateway  # noqa: E402
 import paths  # noqa: E402
+import scanner  # noqa: E402
 import studio  # noqa: E402
 import tools  # noqa: E402
 
@@ -235,30 +236,11 @@ class Handler(BaseHTTPRequestHandler):
         provider = payload.get("provider")  # optional - results work keyless
         if not query:
             return self._send(400, {"error": "query is required"})
-
         try:
-            hits, notes = finder.search(query, limit=8)
+            resp = scanner.scan(query, gateway=gateway, provider=provider)
+            return self._send(200, resp)
         except Exception as e:
             return self._send(502, {"error": f"search failed: {e}"})
-
-        resp = {"query": query, "results": hits, "notes": notes, "answer": None}
-
-        # The grounded answer needs a model. No provider (or no key) -> results
-        # only; the papers are useful on their own.
-        if provider and hits:
-            try:
-                reply = gateway.chat(
-                    provider,
-                    messages=[{"role": "user", "content": query}],
-                    system=finder.grounding_system(hits),
-                )
-                resp.update(answer=reply["text"], model=reply["model"],
-                            provider=reply["provider"])
-            except gateway.GatewayError as e:
-                resp["answer_error"] = str(e)   # show papers, note the model issue
-            except Exception as e:
-                resp["answer_error"] = f"unexpected: {e}"
-        return self._send(200, resp)
 
     def _studio(self, payload):
         provider = payload.get("provider")

@@ -306,3 +306,8 @@ h1, h2 { font-weight: 800; letter-spacing: -.03em; }
   .modal-card, .welcome-card { animation: popin .3s var(--ease); }
   @keyframes popin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 }
+
+/* scanner source tags (one system: neutral chip, distinguished by label) */
+.kind { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--graphite); box-shadow: var(--inset-ash);
+  border-radius: 4px; padding: 2px 7px; margin-right: 9px; vertical-align: 2px; }

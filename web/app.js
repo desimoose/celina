@@ -1,4 +1,4 @@
-// Reveriebot workspace UI. Vanilla, no build step.
+// Celina workspace UI. Vanilla, no build step.
 
 const $ = (id) => document.getElementById(id);
 
@@ -12,13 +12,6 @@ const state = {
   viewing: null,       // { title, text } in the reader
   results: null,       // last search result (answer + sources)
   activeFile: null,
-  studioDraft: null,   // { fmt, label, text, provider, model }
-};
-
-const FORMAT_LABELS = {
-  tiktok: "TikTok script",
-  podcast: "Podcast episode",
-  linkedin: "LinkedIn slideshow",
 };
 
 const escapeHtml = (s) =>
@@ -237,9 +230,8 @@ function nav(view) {
   state.view = view;
   document.querySelectorAll(".navbtn").forEach((b) =>
     b.classList.toggle("is-active", b.dataset.view === view));
-  const map = { work: "s-work", library: "s-library", studio: "s-studio", editor: "s-editor" };
+  const map = { work: "s-work", library: "s-library" };
   Object.entries(map).forEach(([v, id]) => { $(id).hidden = v !== view; });
-  if (view === "studio") updateStudioSrc();
   if (view === "library") loadFiles();
 }
 
@@ -258,7 +250,6 @@ function currentSource() {
 }
 
 function contextText() {
-  if (state.view === "studio" && state.studioDraft) return state.studioDraft.text;
   return currentSource()?.text || "";
 }
 
@@ -298,9 +289,7 @@ async function openArtifact(file) {
   } else {
     showText(data.content);
   }
-  $("view").prepend(makeBar());   // orientation: one obvious next action
   $("save").disabled = true;
-  updateStudioSrc();
   nav("work");
 }
 
@@ -310,21 +299,6 @@ function showText(text) {
   const pre = document.createElement("pre");
   pre.textContent = text;
   $("view").replaceChildren(pre);
-}
-
-// The one obvious next action once you have something in hand.
-function makeBar() {
-  const bar = document.createElement("div");
-  bar.className = "next-step";
-  const btn = document.createElement("button");
-  btn.className = "btn btn--primary";
-  btn.textContent = "Make something";
-  btn.onclick = () => nav("studio");
-  const hint = document.createElement("span");
-  hint.className = "hint";
-  hint.textContent = "Turn this into a post, a script, or an episode.";
-  bar.append(btn, hint);
-  return bar;
 }
 function setEngine(msg) { $("engine").textContent = msg || ""; }
 
@@ -343,10 +317,8 @@ async function openUrl() {
     state.activeFile = null;
     state.results = null;
     showText(data.text);
-    $("view").prepend(makeBar());
     setEngine("Read privately" + (data.note ? " · " + data.note : ""));
     $("save").disabled = false;
-    updateStudioSrc();
   } catch (e) {
     setEngine("failed: " + e.message);
   } finally {
@@ -384,7 +356,6 @@ function renderResults(data) {
   state.activeFile = null;
   state.results = data;
   $("save").disabled = false;
-  updateStudioSrc();
 
   const wrap = document.createElement("div");
   wrap.className = "results";
@@ -445,78 +416,6 @@ function renderResults(data) {
     wrap.appendChild(el);
   });
   $("view").replaceChildren(wrap);
-}
-
-// ---------- studio ----------
-
-function updateStudioSrc() {
-  const src = currentSource();
-  $("studio-src").textContent = src ? "from: " + src.label.slice(0, 60) : "No source yet";
-}
-
-async function generate(fmt, btn) {
-  const src = currentSource();
-  if (!src) {
-    $("studio-out").innerHTML = `<div class="empty small">No source yet. Search a paper and open its full text, or open a saved brief, then come back.</div>`;
-    return;
-  }
-  btn.setAttribute("aria-busy", "true");
-  $("studio-out").innerHTML = `<div class="empty small">Writing your ${FORMAT_LABELS[fmt]} from “${escapeHtml(src.label.slice(0, 50))}”…</div>`;
-  try {
-    const res = await fetch("/api/studio", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider: state.provider, format: fmt, source: src.text }),
-    }).then((r) => r.json());
-    if (res.error) {
-      $("studio-out").innerHTML = `<div class="empty small">Couldn’t write that: ${escapeHtml(res.error)}</div>`;
-      return;
-    }
-    state.studioDraft = { fmt, label: src.label, text: res.text, provider: res.provider, model: res.model };
-    renderDraft();
-  } catch (e) {
-    $("studio-out").innerHTML = `<div class="empty small">Couldn’t write that: ${escapeHtml(e.message)}</div>`;
-  } finally {
-    btn.removeAttribute("aria-busy");
-  }
-}
-
-function renderDraft() {
-  const d = state.studioDraft;
-  const wrap = document.createElement("div");
-  wrap.className = "draft";
-  wrap.innerHTML = `<div class="draft-head"><span class="tag">${escapeHtml(FORMAT_LABELS[d.fmt])}</span><span class="meta">${escapeHtml((d.provider || "") + " " + (d.model || ""))}</span></div>`;
-  const ta = document.createElement("textarea");
-  ta.value = d.text;
-  ta.setAttribute("aria-label", FORMAT_LABELS[d.fmt] + " draft");
-  ta.oninput = () => { d.text = ta.value; };
-  wrap.appendChild(ta);
-  const actions = document.createElement("div");
-  actions.className = "draft-actions";
-  const save = document.createElement("button");
-  save.className = "btn btn--create";
-  save.textContent = "Save to Library";
-  save.onclick = saveDraft;
-  const regen = document.createElement("button");
-  regen.className = "btn btn--ghost";
-  regen.textContent = "Rewrite";
-  regen.onclick = () => { const b = document.querySelector(`.fmt[data-fmt="${d.fmt}"]`); generate(d.fmt, b); };
-  actions.append(save, regen);
-  wrap.appendChild(actions);
-  $("studio-out").replaceChildren(wrap);
-}
-
-async function saveDraft() {
-  const d = state.studioDraft;
-  if (!d) return;
-  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-  const content = `# ${FORMAT_LABELS[d.fmt]}\n\nFrom: ${d.label}\nSaved ${new Date().toISOString()} · ${d.provider} ${d.model}\n\n---\n\n${d.text}`;
-  const res = await fetch("/api/workspace/save", {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ path: `${stamp}-${d.fmt}.md`, content }),
-  }).then((r) => r.json());
-  const meta = $("studio-out").querySelector(".draft-head .meta");
-  if (meta) meta.textContent = res.error ? "save failed" : "saved to Library";
-  loadFiles();
 }
 
 // ---------- save (search / reader) ----------
@@ -611,7 +510,6 @@ $("url").addEventListener("keydown", (e) => { if (e.key === "Enter") findPapers(
 $("save").onclick = saveCurrent;
 $("example-q").onclick = () => { $("url").value = "does caffeine affect sleep?"; findPapers(); };
 $("refresh").onclick = loadFiles;
-document.querySelectorAll(".fmt").forEach((b) => { b.onclick = () => generate(b.dataset.fmt, b); });
 $("composer").addEventListener("submit", send);
 $("clear").onclick = () => { state.history = []; $("log").innerHTML = ""; $("usage").textContent = ""; };
 $("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("composer").requestSubmit(); });

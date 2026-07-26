@@ -1,4 +1,4 @@
-/* Reveriebot - "Coda" editorial workspace. Cream paper, carved black Manrope
+/* Celina - "Coda" editorial workspace. Cream paper, carved black Manrope
    headlines, a single ember-orange accent, hard offset shadows, 8px shape.
    Nearly monochrome: orange is high-signal punctuation only (large text /
    eyebrows / icons), never body text or a fill. Fonts self-hosted (no remote
@@ -260,6 +260,7 @@ h1, h2 { font-weight: 800; letter-spacing: -.03em; }
 .welcome[hidden] { display: none; }
 .welcome-card { width: min(480px, 100%); text-align: center; }
 .wl-step[hidden] { display: none; }
+.wl-logo { display: block; width: 216px; max-width: 72%; height: auto; margin: 0 auto 28px; color: var(--ink); }
 .wl-mark { width: 56px; height: 56px; margin: 0 auto 24px; display: grid; place-items: center; border-radius: var(--radius); background: var(--carbon); color: var(--white); font-weight: 800; font-size: 28px; letter-spacing: -.03em; }
 .wl-check { width: 56px; height: 56px; margin: 0 auto 24px; display: grid; place-items: center; border-radius: var(--radius); background: var(--carbon); color: var(--white); font-size: 30px; font-weight: 800; }
 .welcome-card h1 { font-size: 40px; font-weight: 800; letter-spacing: -.04em; line-height: 1.05; margin: 0 0 14px; color: var(--ink); }

@@ -1,4 +1,4 @@
-# Reveriebot - optional tool installer.
+# Celina - optional tool installer.
 #
 # Nothing here is required: the app runs without any of it. This fetches the
 # heavy research tools into vendor/ and asks before every download.
@@ -14,7 +14,7 @@ function Confirm-Step($message) {
 }
 
 Write-Host ""
-Write-Host "  Reveriebot optional tools" -ForegroundColor Cyan
+Write-Host "  Celina optional tools" -ForegroundColor Cyan
 Write-Host "  The app already works without these."
 Write-Host ""
 
@@ -25,7 +25,7 @@ if (Test-Path (Join-Path $obscuraDir "obscura.exe")) {
 }
 elseif (Confirm-Step "  Download Obscura? (~43 MB, prebuilt x86_64 Windows binary from GitHub releases)") {
     $api = "https://api.github.com/repos/h4ckf0r0day/obscura/releases/latest"
-    $release = Invoke-RestMethod -Uri $api -Headers @{ "User-Agent" = "reveriebot" }
+    $release = Invoke-RestMethod -Uri $api -Headers @{ "User-Agent" = "celina" }
     $asset = $release.assets | Where-Object { $_.name -like "*x86_64-windows*" } | Select-Object -First 1
 
     if (-not $asset) { throw "no Windows asset in the latest release" }

@@ -43,7 +43,7 @@ class MakeServerTest(unittest.TestCase):
 class SeedEnvTest(unittest.TestCase):
     def test_seeds_when_absent_and_never_overwrites(self):
         tmp = os.path.join(
-            os.environ.get("TEMP", "/tmp"), "reveriebot_seed_test.env"
+            os.environ.get("TEMP", "/tmp"), "celina_seed_test.env"
         )
         if os.path.exists(tmp):
             os.remove(tmp)

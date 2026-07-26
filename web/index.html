@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Reveriebot</title>
+<title>Celina</title>
 <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
@@ -12,7 +12,7 @@
 
   <!-- workspace rail -->
   <nav class="rail" aria-label="Workspace">
-    <div class="brand" aria-hidden="true">R</div>
+    <div class="brand" aria-hidden="true">C</div>
 
     <div class="nav">
       <button class="navbtn is-active" data-view="work" aria-label="Search and read">
@@ -22,15 +22,6 @@
       <button class="navbtn" data-view="library" aria-label="Library">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M3 13l9 5 9-5"/></svg>
         <span>Library</span>
-      </button>
-      <button class="navbtn navbtn--studio" data-view="studio" aria-label="Studio">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l1.5 4.5L18 10l-4.5 1.5L12 16l-1.5-4.5L6 10l4.5-1.5L12 4Z"/></svg>
-        <span>Studio</span>
-      </button>
-      <button class="navbtn navbtn--soon" data-view="editor" aria-label="Editor, coming soon">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="8" y1="4" x2="8" y2="20"/><line x1="16" y1="4" x2="16" y2="20"/><line x1="3" y1="12" x2="21" y2="12"/></svg>
-        <span>Editor</span>
-        <em class="soon">soon</em>
       </button>
     </div>
 
@@ -61,9 +52,9 @@
       </div>
       <div class="view" id="view">
         <div class="empty">
-          <h1>Ask anything.<br>Make <span class="accent">something</span>.</h1>
-          <p>Type a question. Reveriebot finds real sources, answers you plainly,
-             and helps you turn it into something to post.</p>
+          <h1>Ask anything.<br>Know <span class="accent">something</span>.</h1>
+          <p>Type a question. Celina finds real sources and answers you plainly.
+             Keep what matters as clean research notes.</p>
           <div class="example">
             <button class="example-chip" id="example-q">Try: does caffeine affect sleep?</button>
           </div>
@@ -82,71 +73,6 @@
         Nothing kept yet. When an answer is worth building on, press Keep this and
         it lands here, ready to turn into something.
       </p>
-    </section>
-
-    <!-- Studio -->
-    <section class="surface surface--studio" id="s-studio" aria-label="Studio" hidden>
-      <div class="surface-head">
-        <h2>Studio</h2>
-        <span class="src" id="studio-src">No source yet</span>
-      </div>
-      <p class="studio-lead">
-        Turn what you have into content. Studio writes from your current source,
-        grounded in it.
-      </p>
-      <div class="formats">
-        <button class="fmt" data-fmt="tiktok">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M12 15V4l6 2.5"/></svg>
-          <span class="fmt-name">TikTok script</span>
-          <span class="fmt-desc">A 45-60s spoken yap with a hook.</span>
-        </button>
-        <button class="fmt" data-fmt="podcast">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-          <span class="fmt-name">Podcast episode</span>
-          <span class="fmt-desc">A two-host segment, back and forth.</span>
-        </button>
-        <button class="fmt" data-fmt="linkedin">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>
-          <span class="fmt-name">LinkedIn slideshow</span>
-          <span class="fmt-desc">A 6-8 slide carousel, hook to takeaway.</span>
-        </button>
-      </div>
-      <div class="studio-out" id="studio-out">
-        <div class="empty small">
-          Pick a format. Studio uses whatever you last read, or a saved brief.
-        </div>
-      </div>
-    </section>
-
-    <!-- Editor (upcoming) -->
-    <section class="surface" id="s-editor" aria-label="Editor" hidden>
-      <div class="surface-head"><h2>Editor</h2><span class="src">Coming</span></div>
-      <div class="coming">
-        <p class="coming-lead">
-          A B-roll and real-footage editor, so a Studio script becomes a video
-          without leaving the workspace. Not built yet. Here is the shape of it.
-        </p>
-        <div class="tl" aria-hidden="true">
-          <div class="tl-track">
-            <span class="tl-label">Footage</span>
-            <span class="clip clip--a" style="width:22%"></span>
-            <span class="clip clip--a" style="width:31%"></span>
-            <span class="clip clip--a" style="width:18%"></span>
-          </div>
-          <div class="tl-track">
-            <span class="tl-label">B-roll</span>
-            <span class="clip clip--b" style="width:15%"></span>
-            <span class="clip clip--b" style="width:24%"></span>
-            <span class="clip clip--b" style="width:20%"></span>
-            <span class="clip clip--b" style="width:12%"></span>
-          </div>
-          <div class="tl-track">
-            <span class="tl-label">Voice</span>
-            <span class="clip clip--c" style="width:70%"></span>
-          </div>
-        </div>
-        <p class="coming-note">Preview of the layout only. No editing here yet.</p>
-      </div>
     </section>
 
   </main>
@@ -171,10 +97,10 @@
 <div class="welcome" id="welcome" hidden>
   <div class="welcome-card">
     <section class="wl-step" data-step="intro">
-      <div class="wl-mark">R</div>
-      <h1>Welcome to Reveriebot</h1>
-      <p class="wl-lead">Reveriebot finds real sources and turns them into content
-        you can post. First, connect an AI to do the thinking.</p>
+      <img class="wl-logo" src="/celina.svg" alt="Celina" />
+      <p class="wl-lead">Celina finds real sources, answers you plainly, and helps
+        you turn research into clear written notes. First, connect an AI to do the
+        thinking.</p>
       <button class="btn btn--primary wl-cta" id="wl-connect-go">Connect your AI</button>
       <button class="btn wl-text" id="wl-skip">Skip for now</button>
     </section>
@@ -200,7 +126,7 @@
     <section class="wl-step" data-step="done" hidden>
       <div class="wl-check" aria-hidden="true">&#10003;</div>
       <h1>You are set</h1>
-      <p class="wl-lead">Your AI is connected. Ask a question and Reveriebot will
+      <p class="wl-lead">Your AI is connected. Ask a question and Celina will
         find real sources to answer it.</p>
       <button class="btn btn--primary wl-cta" id="wl-finish">Start searching</button>
     </section>

@@ -1,11 +1,11 @@
-"""Reveriebot desktop - native Windows window over the local app.
+"""Celina desktop - native Windows window over the local app.
 
 Starts the in-process stdlib server on an ephemeral loopback port, then opens
 a pywebview window pointed at it. Closing the window ends the process; the
 server runs on a daemon thread and dies with it.
 
 Run from source:  python server/desktop.py
-Frozen exe:       Reveriebot.exe   (built via reveriebot.spec / build.ps1)
+Frozen exe:       Celina.exe   (built via celina.spec / build.ps1)
 """
 
 import os
@@ -43,7 +43,7 @@ def run():
 
     _srv, port = start_server()
     webview.create_window(
-        "Reveriebot",
+        "Celina",
         f"http://127.0.0.1:{port}",
         width=1280,
         height=820,

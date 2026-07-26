@@ -8,7 +8,7 @@ garble PDFs built from CID fonts that ship no ToUnicode map.
 
 If `pypdf` (or the older `PyPDF2`) is installed, we use it instead: a pure-
 Python upgrade with far broader coverage. Detected at runtime, never required
-- exactly the pattern the rest of Reveriebot uses for heavy tools.
+- exactly the pattern the rest of Celina uses for heavy tools.
 """
 
 import io

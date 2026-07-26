@@ -1,4 +1,4 @@
-"""Reveriebot - local server.
+"""Celina - local server.
 
 Stdlib only. Serves the web UI and a small JSON API:
 
@@ -25,13 +25,12 @@ import finder  # noqa: E402
 import gateway  # noqa: E402
 import paths  # noqa: E402
 import scanner  # noqa: E402
-import studio  # noqa: E402
 import tools  # noqa: E402
 
 mimetypes.add_type("font/woff2", ".woff2")  # bundled local fonts
 
 SYSTEM_PROMPT = (
-    "You are the Reveriebot workspace agent: a private research assistant. "
+    "You are Celina: a private research assistant. "
     "You help investigate topics using the notebook's collected sources. "
     "Cite what you were given; say plainly when you do not know something "
     "rather than guessing. Be concise and lead with the finding."
@@ -67,7 +66,7 @@ OLLAMA_MODEL=llama3.1:8b
 FINDER_CONTACT_EMAIL=
 
 # --- app ---
-REVERIEBOT_PORT=8765
+CELINA_PORT=8765
 """
 
 
@@ -135,7 +134,7 @@ def safe_workspace_path(rel):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "Reveriebot"
+    server_version = "Celina"
 
     def log_message(self, fmt, *args):
         sys.stderr.write("  %s\n" % (fmt % args))
@@ -200,8 +199,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._explore(payload)
         if route == "/api/fetch":
             return self._fetch(payload)
-        if route == "/api/studio":
-            return self._studio(payload)
         if route == "/api/workspace/save":
             return self._save(payload)
         if route == "/api/settings":
@@ -241,21 +238,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, resp)
         except Exception as e:
             return self._send(502, {"error": f"search failed: {e}"})
-
-    def _studio(self, payload):
-        provider = payload.get("provider")
-        fmt = (payload.get("format") or "").strip()
-        source = payload.get("source") or ""
-        if not provider:
-            return self._send(400, {"error": "select a model first"})
-        try:
-            return self._send(200, studio.generate(gateway, provider, fmt, source))
-        except ValueError as e:
-            return self._send(400, {"error": str(e)})
-        except gateway.GatewayError as e:
-            return self._send(502, {"error": str(e)})
-        except Exception as e:
-            return self._send(500, {"error": f"unexpected: {e}"})
 
     def _fetch(self, payload):
         url = (payload.get("url") or "").strip()
@@ -355,7 +337,7 @@ def make_server(port=None, host="127.0.0.1"):
     load_env()
     os.makedirs(paths.workspace_dir(), exist_ok=True)
     if port is None:
-        port = int(os.environ.get("REVERIEBOT_PORT", "8765"))
+        port = int(os.environ.get("CELINA_PORT", "8765"))
     return ThreadingHTTPServer((host, port), Handler)
 
 
@@ -366,7 +348,7 @@ def main():
     ready = [p["id"] for p in gateway.available() if p["ready"]]
     present = [t["id"] for t in tools.status() if t["present"]]
 
-    print("\n  Reveriebot")
+    print("\n  Celina")
     print(f"  http://localhost:{port}")
     print(f"  providers ready : {', '.join(ready) or 'none - add a key to .env'}")
     print(f"  tools detected  : {', '.join(present) or 'none (optional)'}\n")

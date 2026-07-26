@@ -1,4 +1,4 @@
-# Reveriebot
+# Celina
 
 A private web investigator: a browser, a chat, and a workspace in one window.
 
@@ -27,7 +27,7 @@ copy .env.example .env
 
 ## Desktop app (Windows)
 
-Reveriebot also runs as a native window, no browser and no terminal.
+Celina also runs as a native window, no browser and no terminal.
 
 Run from source (dev):
 
@@ -39,13 +39,13 @@ python server/desktop.py    # native window (needs: pip install -r requirements-
 Build the single-file exe:
 
 ```powershell
-powershell -File build.ps1   # produces dist\Reveriebot.exe
+powershell -File build.ps1   # produces dist\Celina.exe
 ```
 
-The packaged app keeps your data in `Documents\Reveriebot\`:
+The packaged app keeps your data in `Documents\Celina\`:
 
 ```
-Documents\Reveriebot\
+Documents\Celina\
   .env         your API keys (seeded on first run; edit to add keys)
   workspace\   saved briefs, papers, drafts
   vendor\      drop Obscura here (vendor\obscura\obscura.exe) for full-text reads
@@ -102,7 +102,7 @@ server/
 web/           the workspace UI (no build step)
 workspace/     saved artifacts — gitignored, yours
 vendor/        third-party binaries — gitignored
-reveriebot.spec  PyInstaller build config (dist\Reveriebot.exe)
+celina.spec  PyInstaller build config (dist\Celina.exe)
 ```
 
 ## Privacy
@@ -119,8 +119,8 @@ cannot script against the app.
 Working: the three-pane UI, the five-backend gateway, URL fetch with Obscura
 preferred, artifact save and reload, context-aware chat over whatever is open.
 
-Packaged: a single-file Windows app (`build.ps1` -> `dist\Reveriebot.exe`) with
-a native window over the local server, keeping your data in `Documents\Reveriebot\`.
+Packaged: a single-file Windows app (`build.ps1` -> `dist\Celina.exe`) with
+a native window over the local server, keeping your data in `Documents\Celina\`.
 
 Next: wire Agent-Reach and last30days as real research actions, and grow the
 workspace into project folders on disk.

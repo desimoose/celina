@@ -5,15 +5,15 @@ Splits read-only bundled assets (the web UI) from writable user data
 from source in dev or from a PyInstaller onefile exe.
 
 In dev the writable base is the repo root, so `python server/app.py` behaves
-exactly as before. Only the frozen exe writes to Documents\\Reveriebot.
-Set REVERIEBOT_HOME to override the writable base (used by tests and power
+exactly as before. Only the frozen exe writes to Documents\\Celina.
+Set CELINA_HOME to override the writable base (used by tests and power
 users).
 """
 
 import os
 import sys
 
-APP_NAME = "Reveriebot"
+APP_NAME = "Celina"
 
 
 def is_frozen():
@@ -36,7 +36,7 @@ def resource_path(rel=""):
 
 def data_dir():
     """Writable user-data base. Created on demand."""
-    override = os.environ.get("REVERIEBOT_HOME")
+    override = os.environ.get("CELINA_HOME")
     if override:
         base = override
     elif is_frozen():

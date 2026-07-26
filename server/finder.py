@@ -26,7 +26,7 @@ TIMEOUT = 20
 # contact - the "polite pool". Optional, set FINDER_CONTACT_EMAIL to use it.
 CONTACT = os.environ.get("FINDER_CONTACT_EMAIL", "").strip()
 
-UA = "Reveriebot-Finder/0.1 (open-access research tool)"
+UA = "Celina-Finder/0.1 (open-access research tool)"
 
 
 def _get(url):

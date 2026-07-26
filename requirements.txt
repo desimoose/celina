@@ -1,4 +1,4 @@
-# Reveriebot's only Python dependency.
+# Celina's only Python dependency.
 #
 # The app still RUNS with nothing installed - a stdlib PDF extractor and plain
 # fetch keep it working. pypdf is the one dependency worth having: it makes

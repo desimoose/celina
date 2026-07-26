@@ -1,11 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Build: powershell -File build.ps1   (or: python -m PyInstaller reveriebot.spec)
+# Build: powershell -File build.ps1   (or: python -m PyInstaller celina.spec)
 from PyInstaller.utils.hooks import collect_all
 
 datas = [("web", "web")]          # bundle the UI; resource_path("web") finds it
 binaries = []
 hiddenimports = [
-    "finder", "gateway", "studio", "tools", "pdf", "paths", "app", "scanner",
+    "finder", "gateway", "tools", "pdf", "paths", "app", "scanner",
 ]
 
 # pywebview + its .NET bridge need their data/binaries/submodules collected.
@@ -37,7 +37,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="Reveriebot",
+    name="Celina",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

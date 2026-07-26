@@ -1,6 +1,6 @@
 """Optional research tools, detected at runtime.
 
-Nothing here is required to run Reveriebot. Each tool is looked for on disk or
+Nothing here is required to run Celina. Each tool is looked for on disk or
 on PATH; if it is missing the app keeps working and the UI shows it as absent.
 That is the whole point - the heavy tools are upgrades, not prerequisites.
 

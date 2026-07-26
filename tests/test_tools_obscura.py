@@ -13,9 +13,9 @@ import tools  # noqa: E402
 class FindObscuraTest(unittest.TestCase):
     def test_finds_binary_in_data_dir_vendor(self):
         tmp = os.path.join(
-            os.environ.get("TEMP", "/tmp"), "reveriebot_obscura_test"
+            os.environ.get("TEMP", "/tmp"), "celina_obscura_test"
         )
-        os.environ["REVERIEBOT_HOME"] = tmp
+        os.environ["CELINA_HOME"] = tmp
         try:
             vend = os.path.join(paths.vendor_dir(), "obscura")
             os.makedirs(vend, exist_ok=True)
@@ -27,7 +27,7 @@ class FindObscuraTest(unittest.TestCase):
                 os.path.realpath(found), os.path.realpath(fake)
             )
         finally:
-            os.environ.pop("REVERIEBOT_HOME", None)
+            os.environ.pop("CELINA_HOME", None)
 
 
 if __name__ == "__main__":

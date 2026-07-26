@@ -13,7 +13,7 @@ if SERVER not in sys.path:
 
 
 def _fresh_home(name):
-    """Point REVERIEBOT_HOME at an empty temp dir and reload modules that
+    """Point CELINA_HOME at an empty temp dir and reload modules that
     cache paths, so nothing touches the real .env."""
     home = os.path.join(os.environ.get("TEMP", "/tmp"), name)
     if os.path.isdir(home):
@@ -21,7 +21,7 @@ def _fresh_home(name):
             for f in files:
                 os.remove(os.path.join(root, f))
     os.makedirs(home, exist_ok=True)
-    os.environ["REVERIEBOT_HOME"] = home
+    os.environ["CELINA_HOME"] = home
     import paths
     importlib.reload(paths)
     import gateway
@@ -33,7 +33,7 @@ def _fresh_home(name):
 
 class UpdateEnvTest(unittest.TestCase):
     def tearDown(self):
-        os.environ.pop("REVERIEBOT_HOME", None)
+        os.environ.pop("CELINA_HOME", None)
         for k in ("OPENAI_API_KEY", "XAI_API_KEY", "OPENROUTER_MODEL"):
             os.environ.pop(k, None)
 
@@ -78,7 +78,7 @@ class UpdateEnvTest(unittest.TestCase):
 
 class SettingsStateTest(unittest.TestCase):
     def tearDown(self):
-        os.environ.pop("REVERIEBOT_HOME", None)
+        os.environ.pop("CELINA_HOME", None)
         os.environ.pop("OPENAI_API_KEY", None)
 
     def test_key_hint_masks_and_shortcircuits(self):
@@ -105,7 +105,7 @@ class SettingsStateTest(unittest.TestCase):
 
 class SettingsRoutesTest(unittest.TestCase):
     def tearDown(self):
-        os.environ.pop("REVERIEBOT_HOME", None)
+        os.environ.pop("CELINA_HOME", None)
         for k in ("OPENAI_API_KEY", "FINDER_CONTACT_EMAIL", "BOGUS_ENV"):
             os.environ.pop(k, None)
 

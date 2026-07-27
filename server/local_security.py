@@ -51,10 +51,11 @@ class LocalSecurity:
     def _query_contains_secret(self, query_string):
         if not isinstance(query_string, str):
             return True
-        values = [value for _key, value in parse_qsl(query_string)]
+        pairs = parse_qsl(query_string, keep_blank_values=True)
         return any(
-            _secret_matches(value, token)
-            for value in values
+            _secret_matches(part, token)
+            for pair in pairs
+            for part in pair
             for token in (self.launch_token, self.csrf_token)
         )
 

@@ -66,6 +66,22 @@ class LocalSecurityTest(unittest.TestCase):
             query_string=f"launch={security.launch_token}",
         ))
 
+    def test_rejects_tokens_as_query_keys_or_bare_segments(self):
+        security = local_security.LocalSecurity("http://127.0.0.1:8765")
+        cookie = f"{security.cookie_name}={security.launch_token}"
+
+        for query_string in (
+            f"{security.csrf_token}=value",
+            security.launch_token,
+        ):
+            with self.subTest(query_string=query_string):
+                self.assertFalse(security.authorize_mutation(
+                    cookie,
+                    security.csrf_token,
+                    "http://127.0.0.1:8765",
+                    query_string=query_string,
+                ))
+
     def test_denial_body_never_echoes_launch_or_csrf_tokens(self):
         security = local_security.LocalSecurity("http://127.0.0.1:8765")
 

@@ -97,6 +97,17 @@ class SessionStore:
                 sessions.append(replace(item, recovery_required=True))
         return sessions
 
+    def list(self):
+        """Return valid local ledgers without maintaining a global index."""
+        sessions = []
+        for name in sorted(os.listdir(self.root)):
+            if not _SAFE_ID.fullmatch(name):
+                continue
+            item = self.get(name)
+            if item is not None:
+                sessions.append(item)
+        return sessions
+
     def mark_stopped(self, session_id):
         return self._set_state(session_id, "stopped")
 

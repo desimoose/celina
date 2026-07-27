@@ -12,6 +12,7 @@ Stdlib only. Serves the web UI and a small JSON API:
 Run:  python server/app.py     then open http://localhost:8765
 """
 
+from dataclasses import replace
 import json
 import mimetypes
 import os
@@ -22,9 +23,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import finder  # noqa: E402
+import events  # noqa: E402
 import gateway  # noqa: E402
+import local_security  # noqa: E402
 import paths  # noqa: E402
 import scanner  # noqa: E402
+import serialization  # noqa: E402
+import sessions  # noqa: E402
+import tokens  # noqa: E402
 import tools  # noqa: E402
 
 mimetypes.add_type("font/woff2", ".woff2")  # bundled local fonts
@@ -137,16 +143,28 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "Celina"
 
     def log_message(self, fmt, *args):
-        sys.stderr.write("  %s\n" % (fmt % args))
+        # BaseHTTPRequestHandler normally logs full request targets, which can
+        # leak a rejected query-string secret into a terminal or log collector.
+        sys.stderr.write("  local request completed\n")
 
     # --- helpers -------------------------------------------------------
-    def _send(self, code, body, ctype="application/json; charset=utf-8"):
+    def _send(
+        self,
+        code,
+        body,
+        ctype="application/json; charset=utf-8",
+        headers=None,
+    ):
         if isinstance(body, (dict, list)):
             body = json.dumps(body).encode("utf-8")
         elif isinstance(body, str):
             body = body.encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", ctype)
+        if urllib.parse.urlparse(self.path).path.startswith("/api/"):
+            self.send_header("Cache-Control", "no-store")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -157,10 +175,118 @@ class Handler(BaseHTTPRequestHandler):
             return {}
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
+    def _discard_request_body(self):
+        try:
+            remaining = max(0, int(self.headers.get("Content-Length") or 0))
+        except ValueError:
+            return
+        while remaining:
+            chunk = self.rfile.read(min(remaining, 65536))
+            if not chunk:
+                return
+            remaining -= len(chunk)
+
+    def _forbidden(self):
+        return self._send(403, self.server.local_security.denial_body())
+
+    def _not_found(self):
+        return self._send(404, {"error": "not found"})
+
+    def _has_launch_cookie(self):
+        security = self.server.local_security
+        return security.authorize_mutation(
+            self.headers.get("Cookie"),
+            security.csrf_token,
+            security.expected_origin,
+        )
+
+    def _allows_session_mutation(self, query_string):
+        security = self.server.local_security
+        return security.authorize_mutation(
+            self.headers.get("Cookie"),
+            self.headers.get("X-Celina-CSRF"),
+            self.headers.get("Origin"),
+            query_string,
+        )
+
+    def _session(self, session_id):
+        try:
+            item = self.server.session_store.get(session_id)
+        except (OSError, ValueError):
+            return None
+        if item is None:
+            return None
+        if item.session_id in self.server.recovery_required_session_ids:
+            return replace(item, recovery_required=True)
+        return item
+
+    def _serialized_session(self, session):
+        return serialization.serialize_session(session)
+
+    @staticmethod
+    def _traffic_record(record, include_bodies=False):
+        value = {
+            "traffic_event_id": record["traffic_event_id"],
+            "session_id": record["session_id"],
+            "run_id": record["run_id"],
+            "correlation_id": record["correlation_id"],
+            "direction": record["direction"],
+            "transport": record["transport"],
+            "destination": record["destination"],
+            "method_or_action": record["method_or_action"],
+            "started_at": record["started_at"],
+            "completed_at": record["completed_at"],
+            "status": record["status"],
+            "duration_ms": record["duration_ms"],
+            "request_bytes": record["request_bytes"],
+            "response_bytes": record["response_bytes"],
+            "request_headers": record["request_headers"],
+            "response_headers": record["response_headers"],
+            "redactions": record["redactions"],
+            "error_class": record["error_class"],
+            "error_summary": record["error_summary"],
+        }
+        if include_bodies:
+            value["request_body"] = bytes(
+                record["request_body"] or b""
+            ).decode("utf-8", "replace")
+            value["response_body"] = bytes(
+                record["response_body"] or b""
+            ).decode("utf-8", "replace")
+        return value
+
+    @staticmethod
+    def _usage_summary(summary):
+        return {
+            "session_id": summary.session_id,
+            "input_tokens": summary.input_tokens,
+            "output_tokens": summary.output_tokens,
+            "cached_input_tokens": summary.cached_input_tokens,
+            "total_tokens": summary.total_tokens,
+            "context_percentage": summary.context_percentage,
+            "records": [{
+                "usage_id": record.usage_id,
+                "session_id": record.session_id,
+                "correlation_id": record.correlation_id,
+                "provider": record.provider,
+                "model": record.model,
+                "input_tokens": record.input_tokens,
+                "output_tokens": record.output_tokens,
+                "cached_input_tokens": record.cached_input_tokens,
+                "context_limit": record.context_limit,
+                "context_percentage": record.context_percentage,
+                "is_estimated": record.is_estimated,
+                "recorded_at": record.recorded_at,
+            } for record in summary.records],
+        }
+
     # --- routes --------------------------------------------------------
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         route = parsed.path
+
+        if route == "/api/sessions" or route.startswith("/api/sessions/"):
+            return self._get_session_route(route)
 
         if route == "/api/config":
             return self._send(200, {
@@ -187,7 +313,10 @@ class Handler(BaseHTTPRequestHandler):
         return self._serve_static(route)
 
     def do_POST(self):
-        route = urllib.parse.urlparse(self.path).path
+        parsed = urllib.parse.urlparse(self.path)
+        route = parsed.path
+        if route == "/api/sessions" or route.startswith("/api/sessions/"):
+            return self._post_session_route(parsed)
         try:
             payload = self._read_json()
         except Exception:
@@ -204,6 +333,113 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/settings":
             return self._save_settings(payload)
         return self._send(404, {"error": "no such endpoint"})
+
+    def do_DELETE(self):
+        parsed = urllib.parse.urlparse(self.path)
+        route = parsed.path
+        prefix = "/api/sessions/"
+        if not route.startswith(prefix):
+            return self._not_found()
+        if not self._allows_session_mutation(parsed.query):
+            self._discard_request_body()
+            return self._forbidden()
+        session_id = route[len(prefix):]
+        if not session_id or "/" in session_id or self._session(session_id) is None:
+            return self._not_found()
+        try:
+            result = self.server.session_store.delete(session_id)
+        except (OSError, ValueError):
+            return self._not_found()
+        if not result.deleted:
+            return self._send(500, {"error": "could not delete session"})
+        self.server.recovery_required_session_ids.discard(session_id)
+        return self._send(200, {"session_id": session_id, "deleted": True})
+
+    def _get_session_route(self, route):
+        if not self._has_launch_cookie():
+            return self._forbidden()
+        if route == "/api/sessions":
+            return self._send(200, {"sessions": [
+                self._serialized_session(
+                    self._session(item.session_id) or item
+                )
+                for item in self.server.session_store.list()
+            ]})
+
+        prefix = "/api/sessions/"
+        suffix = route[len(prefix):]
+        if not suffix:
+            return self._not_found()
+        parts = suffix.split("/")
+        session_id = parts[0]
+        session = self._session(session_id)
+        if session is None:
+            return self._not_found()
+        if len(parts) == 1:
+            return self._send(200, self._serialized_session(session))
+        if len(parts) == 2 and parts[1] == "traffic":
+            try:
+                records = self.server.session_store.list_traffic(session_id)
+            except (OSError, ValueError):
+                return self._not_found()
+            return self._send(200, {
+                "traffic": [self._traffic_record(record) for record in records]
+            })
+        if len(parts) == 3 and parts[1] == "traffic" and parts[2]:
+            try:
+                records = self.server.session_store.list_traffic(session_id)
+            except (OSError, ValueError):
+                return self._not_found()
+            record = next(
+                (
+                    item for item in records
+                    if item["traffic_event_id"] == parts[2]
+                ),
+                None,
+            )
+            if record is None:
+                return self._not_found()
+            return self._send(200, self._traffic_record(record, include_bodies=True))
+        if len(parts) == 2 and parts[1] == "usage":
+            summary = tokens.TokenAccountant(
+                self.server.session_store, session_id
+            ).summary(session_id)
+            return self._send(200, self._usage_summary(summary))
+        return self._not_found()
+
+    def _post_session_route(self, parsed):
+        if not self._allows_session_mutation(parsed.query):
+            self._discard_request_body()
+            return self._forbidden()
+        route = parsed.path
+        if route == "/api/sessions":
+            try:
+                payload = self._read_json()
+            except Exception:
+                return self._send(400, {"error": "invalid JSON body"})
+            if not isinstance(payload, dict):
+                return self._send(400, {"error": "invalid session request"})
+            content_recording = payload.get("content_recording", True)
+            if not isinstance(content_recording, bool):
+                return self._send(400, {
+                    "error": "content_recording must be a boolean"
+                })
+            session = self.server.session_store.create(content_recording)
+            return self._send(201, self._serialized_session(session))
+
+        prefix = "/api/sessions/"
+        suffix = route[len(prefix):]
+        if not suffix.endswith("/end"):
+            return self._not_found()
+        session_id = suffix[:-4]
+        if not session_id or "/" in session_id or self._session(session_id) is None:
+            return self._not_found()
+        try:
+            session = self.server.session_store.mark_stopped(session_id)
+        except (OSError, ValueError, KeyError):
+            return self._not_found()
+        self.server.recovery_required_session_ids.discard(session_id)
+        return self._send(200, self._serialized_session(session))
 
     # --- handlers ------------------------------------------------------
     def _chat(self, payload):
@@ -326,11 +562,37 @@ class Handler(BaseHTTPRequestHandler):
         if not os.path.isfile(target):
             return self._send(404, {"error": "not found"})
         ctype = mimetypes.guess_type(target)[0] or "application/octet-stream"
+        if route in ("/", ""):
+            with open(target, "r", encoding="utf-8") as fh:
+                page = fh.read()
+            csrf_meta = (
+                '<meta name="celina-csrf" content="%s">'
+                % self.server.local_security.csrf_token
+            )
+            if "</head>" in page:
+                page = page.replace("</head>", csrf_meta + "</head>", 1)
+            else:
+                page = csrf_meta + page
+            return self._send(
+                200,
+                page,
+                ctype,
+                headers={
+                    "Set-Cookie": self.server.local_security.launch_cookie_header
+                },
+            )
         with open(target, "rb") as fh:
             return self._send(200, fh.read(), ctype)
 
 
-def make_server(port=None, host="127.0.0.1"):
+def _bound_origin(host, port):
+    host = str(host)
+    if ":" in host and not host.startswith("["):
+        host = "[%s]" % host
+    return "http://%s:%s" % (host, port)
+
+
+def make_server(port=None, host="127.0.0.1", session_root=None):
     """Build a bound (not-yet-serving) server. port=0 picks a free port;
     read it back from the returned server's .server_address[1]."""
     seed_env(paths.env_file())
@@ -338,7 +600,18 @@ def make_server(port=None, host="127.0.0.1"):
     os.makedirs(paths.workspace_dir(), exist_ok=True)
     if port is None:
         port = int(os.environ.get("CELINA_PORT", "8765"))
-    return ThreadingHTTPServer((host, port), Handler)
+    server = ThreadingHTTPServer((host, port), Handler)
+    bound_host, bound_port = server.server_address[:2]
+    store = sessions.SessionStore(session_root)
+    server.session_store = store
+    server.event_bus = events.EventBus(store)
+    server.local_security = local_security.LocalSecurity(
+        _bound_origin(bound_host, bound_port)
+    )
+    server.recovery_required_session_ids = {
+        item.session_id for item in store.list_recoverable()
+    }
+    return server
 
 
 def main():

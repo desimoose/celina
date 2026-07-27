@@ -6,6 +6,8 @@ datas = [("web", "web")]          # bundle the UI; resource_path("web") finds it
 binaries = []
 hiddenimports = [
     "finder", "gateway", "tools", "pdf", "paths", "app", "scanner",
+    "sessions", "events", "redaction", "tokens", "traffic", "evidence",
+    "orchestrator", "verification", "memory",
 ]
 
 # pywebview + its .NET bridge need their data/binaries/submodules collected.

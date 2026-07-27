@@ -160,10 +160,19 @@ class SearchOrchestrator:
         self._runs = {}
         self._lock = threading.RLock()
 
-    def start(self, request):
+    def start(self, request, run=None):
         if not isinstance(request, SearchRequest):
             raise TypeError("request must be a SearchRequest")
-        run = SearchRun.create(request.session_id, request.query.strip())
+        if run is None:
+            run = SearchRun.create(request.session_id, request.query.strip())
+        if not isinstance(run, SearchRun):
+            raise TypeError("run must be a SearchRun")
+        if (
+            run.session_id != request.session_id
+            or run.query != request.query.strip()
+            or run.state != "created"
+        ):
+            raise ValueError("run must match a created search request")
         with self._lock:
             if any(
                 item.session_id == request.session_id

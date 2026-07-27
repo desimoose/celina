@@ -39,11 +39,13 @@ def _first_existing(*paths):
 
 def find_obscura():
     vend = paths.vendor_dir()
+    bundled = paths.resource_path(os.path.join("vendor", "obscura", "obscura.exe"))
     return _first_existing(
         os.path.join(vend, "obscura", "obscura.exe"),
         os.path.join(vend, "obscura.exe"),
         os.path.join(VENDOR, "obscura", "obscura.exe"),
         os.path.join(VENDOR, "obscura.exe"),
+        bundled,  # the copy PyInstaller froze in, when the exe was built with it
     ) or shutil.which("obscura")
 
 
@@ -86,8 +88,26 @@ def _readable(raw_html):
     return _BLANKS.sub("\n\n", text).strip()
 
 
-def _fetch_plain(url):
+def _fetch_plain(url, traffic_context=None):
     req = urllib.request.Request(url, headers={"User-Agent": UA})
+    if traffic_context is not None:
+        result = traffic.http_request(
+            traffic_context,
+            req,
+            timeout=45,
+            action_type="page.fetch",
+        )
+        content_type = next(
+            (
+                value
+                for key, value in result.headers.items()
+                if key.lower() == "content-type"
+            ),
+            "",
+        )
+        match = re.search(r"charset\s*=\s*['\"]?([^;'\"\s]+)", content_type)
+        charset = match.group(1) if match else "utf-8"
+        return result.body.decode(charset, "replace")
     with urllib.request.urlopen(req, timeout=45) as resp:
         charset = resp.headers.get_content_charset() or "utf-8"
         return resp.read().decode(charset, "replace")
@@ -215,7 +235,7 @@ def _looks_like_pdf_url(url):
     return path.endswith(".pdf") or "/pdf/" in path
 
 
-def _fetch_obscura_pdf(binary, url, timeout=40):
+def _fetch_obscura_pdf(binary, url, timeout=40, traffic_context=None):
     """Fetch a PDF's raw bytes through Obscura and extract its text.
 
     Uses `--dump original` (a straight HTTP GET through Obscura's own TLS, which
@@ -224,6 +244,12 @@ def _fetch_obscura_pdf(binary, url, timeout=40):
     fires a load event on a PDF and hangs. Bytes are captured raw (no text
     decode); the PDF module turns them into readable text.
     """
+    if (
+        traffic_context is not None
+        and traffic_context.cancellation is not None
+        and traffic_context.cancellation.is_set()
+    ):
+        raise traffic.TrafficCancelled("page read cancelled before it started")
     proc = subprocess.run(
         [binary, "fetch", "--dump", "original", "--timeout", str(timeout), url],
         capture_output=True, timeout=timeout + 40,
@@ -237,12 +263,18 @@ def _fetch_obscura_pdf(binary, url, timeout=40):
     return pdf.extract_text(data)  # (text, backend); raises if unreadable
 
 
-def fetch(url):
+def fetch(url, traffic_context=None):
     """Fetch a page, preferring Obscura when it is available.
 
     Returns the readable text plus which engine actually did the work, so the
     UI can be honest about how the request was made.
     """
+    if (
+        traffic_context is not None
+        and traffic_context.cancellation is not None
+        and traffic_context.cancellation.is_set()
+    ):
+        raise traffic.TrafficCancelled("page read cancelled before it started")
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
@@ -252,34 +284,77 @@ def fetch(url):
         # spinning the browser only to have it hang on a non-HTML resource.
         if _looks_like_pdf_url(url):
             try:
-                text, backend = _fetch_obscura_pdf(binary, url)
-                return {"url": url, "engine": "obscura-pdf",
-                        "note": f"pdf · {backend}", "text": text}
+                text, backend = _fetch_obscura_pdf(
+                    binary,
+                    url,
+                    traffic_context=traffic_context,
+                )
+                return {
+                    "url": url,
+                    "engine": "obscura-pdf",
+                    "content_type": "application/pdf",
+                    "note": f"pdf · {backend}",
+                    "text": text,
+                }
+            except traffic.TrafficCancelled:
+                raise
             except Exception:
                 pass  # not really a PDF, or unreadable - try the normal path
 
         try:
             # Obscura's --dump text is already readable; no regex strip needed.
-            return {"url": url, "engine": "obscura", "note": "stealth",
-                    "text": _fetch_obscura(binary, url)}
+            return {
+                "url": url,
+                "engine": "obscura",
+                "note": "stealth",
+                "text": obscura_dump(
+                    url,
+                    dump="text",
+                    stealth=True,
+                    traffic_context=traffic_context,
+                    action_type="page.fetch",
+                ),
+                "content_type": "text/plain",
+            }
+        except traffic.TrafficCancelled:
+            raise
         except Exception as e:
             # An unmarked PDF (e.g. arXiv links carry no .pdf suffix) lands here
             # as empty text - try the byte path before giving up.
             try:
-                text, backend = _fetch_obscura_pdf(binary, url)
-                return {"url": url, "engine": "obscura-pdf",
-                        "note": f"pdf · {backend}", "text": text}
+                text, backend = _fetch_obscura_pdf(
+                    binary,
+                    url,
+                    traffic_context=traffic_context,
+                )
+                return {
+                    "url": url,
+                    "engine": "obscura-pdf",
+                    "content_type": "application/pdf",
+                    "note": f"pdf · {backend}",
+                    "text": text,
+                }
             except Exception:
                 pass
             fallback_note = f"(obscura: {e}; used plain fetch)"
             try:
-                return {"url": url, "engine": "plain", "note": fallback_note,
-                        "text": _readable(_fetch_plain(url))}
+                return {
+                    "url": url,
+                    "engine": "plain",
+                    "note": fallback_note,
+                    "content_type": "text/plain",
+                    "text": _readable(_fetch_plain(url, traffic_context)),
+                }
             except Exception as inner:
                 raise RuntimeError(f"{fallback_note} plain fetch also failed: {inner}")
 
     try:
-        return {"url": url, "engine": "plain", "text": _readable(_fetch_plain(url))}
+        return {
+            "url": url,
+            "engine": "plain",
+            "text": _readable(_fetch_plain(url, traffic_context)),
+            "content_type": "text/plain",
+        }
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"HTTP {e.code} fetching {url}")
     except Exception as e:

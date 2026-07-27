@@ -21,3 +21,6 @@ dist/
 # os
 Thumbs.db
 desktop.ini
+
+# local design-review artifacts
+.superpowers/

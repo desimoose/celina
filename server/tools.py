@@ -10,6 +10,7 @@ That is the whole point - the heavy tools are upgrades, not prerequisites.
 """
 
 import html
+from dataclasses import dataclass
 import os
 import re
 import shutil
@@ -28,6 +29,12 @@ VENDOR = os.path.join(ROOT, "vendor")
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+
+
+@dataclass(frozen=True)
+class _PageResponse:
+    body: bytes
+    content_type: str
 
 
 def _first_existing(*paths):
@@ -97,20 +104,64 @@ def _fetch_plain(url, traffic_context=None):
             timeout=45,
             action_type="page.fetch",
         )
-        content_type = next(
-            (
-                value
-                for key, value in result.headers.items()
-                if key.lower() == "content-type"
-            ),
-            "",
-        )
-        match = re.search(r"charset\s*=\s*['\"]?([^;'\"\s]+)", content_type)
-        charset = match.group(1) if match else "utf-8"
-        return result.body.decode(charset, "replace")
+        return _PageResponse(result.body, _content_type(result.headers))
     with urllib.request.urlopen(req, timeout=45) as resp:
-        charset = resp.headers.get_content_charset() or "utf-8"
-        return resp.read().decode(charset, "replace")
+        return _PageResponse(resp.read(), _content_type(resp.headers))
+
+
+def _content_type(headers):
+    for key, value in headers.items():
+        if key.lower() == "content-type":
+            return str(value)
+    return "text/html"
+
+
+def _media_type(content_type):
+    return content_type.split(";", 1)[0].strip().lower()
+
+
+def _decode_page_body(body, content_type):
+    match = re.search(r"charset\s*=\s*['\"]?([^;'\"\s]+)", content_type)
+    charset = match.group(1) if match else "utf-8"
+    return body.decode(charset, "replace")
+
+
+def _plain_page(url, traffic_context=None, note=None):
+    response = _fetch_plain(url, traffic_context)
+    media_type = _media_type(response.content_type)
+    if media_type == "application/pdf":
+        if not pdf.looks_like_pdf(response.body):
+            raise RuntimeError("response declared PDF but did not contain a PDF")
+        text, backend = pdf.extract_text(response.body)
+        result = {
+            "url": url,
+            "engine": "plain-pdf",
+            "note": f"pdf Â· {backend}",
+            "text": text,
+            "content_type": "application/pdf",
+        }
+    else:
+        textual_types = {
+            "application/json",
+            "application/xml",
+            "application/xhtml+xml",
+        }
+        if not (media_type.startswith("text/") or media_type in textual_types):
+            raise RuntimeError(
+                f"unsupported non-text page content type: {media_type or 'unknown'}"
+            )
+        result = {
+            "url": url,
+            "engine": "plain",
+            "text": _readable(_decode_page_body(
+                response.body,
+                response.content_type,
+            )),
+            "content_type": response.content_type,
+        }
+    if note:
+        result["note"] = note
+    return result
 
 
 def _fetch_obscura(binary, url, timeout=30):
@@ -250,14 +301,79 @@ def _fetch_obscura_pdf(binary, url, timeout=40, traffic_context=None):
         and traffic_context.cancellation.is_set()
     ):
         raise traffic.TrafficCancelled("page read cancelled before it started")
-    proc = subprocess.run(
-        [binary, "fetch", "--dump", "original", "--timeout", str(timeout), url],
-        capture_output=True, timeout=timeout + 40,
-    )
+    traffic_event_id = None
+    request_redactions = ()
+    started = time.monotonic()
+    if traffic_context is not None:
+        traffic_event_id, request_redactions = (
+            traffic_context.recorder.start_process(
+                traffic_context,
+                url,
+                "page.fetch",
+                {
+                    "tool": "obscura",
+                    "dump": "original",
+                    "stealth": False,
+                    "timeout_seconds": timeout,
+                },
+            )
+        )
+    try:
+        proc = subprocess.run(
+            [binary, "fetch", "--dump", "original", "--timeout", str(timeout), url],
+            capture_output=True,
+            timeout=timeout + 40,
+        )
+    except subprocess.TimeoutExpired as error:
+        if traffic_context is not None:
+            detail = error.stderr or b"obscura timed out"
+            if isinstance(detail, str):
+                detail = detail.encode("utf-8")
+            traffic_context.recorder.complete_process(
+                traffic_context,
+                traffic_event_id,
+                started,
+                None,
+                detail,
+                request_redactions,
+                "obscura timed out",
+            )
+        raise
+    except OSError:
+        if traffic_context is not None:
+            traffic_context.recorder.complete_process(
+                traffic_context,
+                traffic_event_id,
+                started,
+                None,
+                b"",
+                request_redactions,
+                "obscura process failed",
+            )
+        raise
     if proc.returncode != 0:
         msg = proc.stderr.decode("utf-8", "replace").strip()[:300]
+        if traffic_context is not None:
+            traffic_context.recorder.complete_process(
+                traffic_context,
+                traffic_event_id,
+                started,
+                proc.returncode,
+                proc.stderr or b"",
+                request_redactions,
+                msg or "obscura exited non-zero",
+            )
         raise RuntimeError(msg or "obscura exited non-zero")
     data = proc.stdout
+    if traffic_context is not None:
+        traffic_context.recorder.complete_process(
+            traffic_context,
+            traffic_event_id,
+            started,
+            proc.returncode,
+            data,
+            request_redactions,
+        )
     if not pdf.looks_like_pdf(data):
         raise RuntimeError("not a PDF")
     return pdf.extract_text(data)  # (text, backend); raises if unreadable
@@ -338,23 +454,12 @@ def fetch(url, traffic_context=None):
                 pass
             fallback_note = f"(obscura: {e}; used plain fetch)"
             try:
-                return {
-                    "url": url,
-                    "engine": "plain",
-                    "note": fallback_note,
-                    "content_type": "text/plain",
-                    "text": _readable(_fetch_plain(url, traffic_context)),
-                }
+                return _plain_page(url, traffic_context, fallback_note)
             except Exception as inner:
                 raise RuntimeError(f"{fallback_note} plain fetch also failed: {inner}")
 
     try:
-        return {
-            "url": url,
-            "engine": "plain",
-            "text": _readable(_fetch_plain(url, traffic_context)),
-            "content_type": "text/plain",
-        }
+        return _plain_page(url, traffic_context)
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"HTTP {e.code} fetching {url}")
     except Exception as e:

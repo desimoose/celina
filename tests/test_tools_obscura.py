@@ -125,6 +125,97 @@ class ObscuraTrafficTest(unittest.TestCase):
         self.assertEqual(record.error_class, "ProcessError")
         self.assertNotIn(self.secret, record.error_summary)
 
+    @mock.patch("tools.pdf.extract_text", return_value=("Readable PDF text.", "stdlib"))
+    @mock.patch("tools.subprocess.run")
+    def test_pdf_read_records_the_successful_process(self, run, extract_text):
+        pdf_bytes = b"%PDF-1.7\n" + self.secret.encode()
+        run.return_value = mock.Mock(
+            returncode=0,
+            stdout=pdf_bytes,
+            stderr=b"",
+        )
+
+        text, backend = tools._fetch_obscura_pdf(
+            r"C:\vendor\obscura.exe",
+            f"https://example.test/source.pdf?token={self.secret}",
+            traffic_context=self.context,
+        )
+
+        self.assertEqual((text, backend), ("Readable PDF text.", "stdlib"))
+        records = self.recorder.list(self.session.session_id)
+        self.assertEqual(len(records), 1)
+        record = records[0]
+        self.assertEqual(record.transport, "process")
+        self.assertEqual(record.method_or_action, "page.fetch")
+        self.assertEqual(record.status, 0)
+        self.assertIn("[REDACTED]", urllib.parse.unquote(record.destination))
+        self.assertIn(b"[REDACTED]", record.response_body)
+        extract_text.assert_called_once_with(pdf_bytes)
+
+    @mock.patch("tools.subprocess.run")
+    def test_pdf_read_records_nonzero_exit_before_raising(self, run):
+        run.return_value = mock.Mock(
+            returncode=9,
+            stdout=b"",
+            stderr=f"failed with {self.secret}".encode(),
+        )
+
+        with self.assertRaises(RuntimeError):
+            tools._fetch_obscura_pdf(
+                r"C:\vendor\obscura.exe",
+                "https://example.test/source.pdf",
+                traffic_context=self.context,
+            )
+
+        records = self.recorder.list(self.session.session_id)
+        self.assertEqual(len(records), 1)
+        record = records[0]
+        self.assertEqual(record.status, 9)
+        self.assertEqual(record.error_class, "ProcessError")
+        self.assertNotIn(self.secret, record.error_summary)
+        self.assertIn(b"[REDACTED]", record.response_body)
+
+    @mock.patch("tools.subprocess.run")
+    def test_pdf_read_records_timeout_before_raising(self, run):
+        run.side_effect = subprocess.TimeoutExpired(
+            cmd="obscura",
+            timeout=1,
+            stderr=f"waited for {self.secret}".encode(),
+        )
+
+        with self.assertRaises(subprocess.TimeoutExpired):
+            tools._fetch_obscura_pdf(
+                r"C:\vendor\obscura.exe",
+                "https://example.test/source.pdf",
+                traffic_context=self.context,
+            )
+
+        records = self.recorder.list(self.session.session_id)
+        self.assertEqual(len(records), 1)
+        record = records[0]
+        self.assertIsNone(record.status)
+        self.assertEqual(record.error_class, "ProcessError")
+        self.assertNotIn(self.secret, record.error_summary)
+        self.assertIn(b"[REDACTED]", record.response_body)
+
+    @mock.patch("tools.subprocess.run")
+    def test_pdf_read_records_process_error_before_raising(self, run):
+        run.side_effect = OSError(f"unable to launch with {self.secret}")
+
+        with self.assertRaises(OSError):
+            tools._fetch_obscura_pdf(
+                r"C:\vendor\obscura.exe",
+                "https://example.test/source.pdf",
+                traffic_context=self.context,
+            )
+
+        records = self.recorder.list(self.session.session_id)
+        self.assertEqual(len(records), 1)
+        record = records[0]
+        self.assertIsNone(record.status)
+        self.assertEqual(record.error_class, "ProcessError")
+        self.assertNotIn(self.secret, record.error_summary)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -86,7 +86,7 @@ class PageReaderTrafficTest(unittest.TestCase):
             traffic_event_id="traffic-1",
         )
 
-        text = tools._fetch_plain(
+        response = tools._fetch_plain(
             "https://example.test/plain",
             traffic_context=self.context,
         )
@@ -97,7 +97,38 @@ class PageReaderTrafficTest(unittest.TestCase):
             timeout=45,
             action_type="page.fetch",
         )
-        self.assertEqual(text, "<p>Complete readable body.</p>")
+        self.assertEqual(
+            getattr(response, "content_type", None),
+            "text/html; charset=utf-8",
+        )
+        self.assertEqual(
+            getattr(response, "body", None),
+            b"<p>Complete readable body.</p>",
+        )
+
+    @mock.patch("tools.pdf.extract_text", return_value=("Extracted PDF body.", "stdlib"))
+    @mock.patch("tools.find_obscura", return_value=None)
+    @mock.patch("tools.traffic.http_request")
+    def test_plain_pdf_response_is_extracted_before_returning_evidence(
+        self,
+        recorded_request,
+        _find_obscura,
+        extract_text,
+    ):
+        pdf_bytes = b"%PDF-1.7\nBinary PDF body"
+        recorded_request.return_value = traffic.HttpResult(
+            status=200,
+            headers={"content-type": "application/pdf"},
+            body=pdf_bytes,
+            traffic_event_id="traffic-1",
+        )
+
+        page = tools.fetch("https://example.test/plain.pdf", self.context)
+
+        self.assertEqual(page.get("engine"), "plain-pdf")
+        self.assertEqual(page.get("content_type"), "application/pdf")
+        self.assertEqual(page.get("text"), "Extracted PDF body.")
+        extract_text.assert_called_once_with(pdf_bytes)
 
     @mock.patch("tools.obscura_dump", return_value="should not be read")
     @mock.patch("tools.find_obscura", return_value=r"C:\vendor\obscura.exe")

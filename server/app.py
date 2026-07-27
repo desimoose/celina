@@ -578,7 +578,8 @@ class Handler(BaseHTTPRequestHandler):
                 page,
                 ctype,
                 headers={
-                    "Set-Cookie": self.server.local_security.launch_cookie_header
+                    "Set-Cookie": self.server.local_security.launch_cookie_header,
+                    "Cache-Control": "no-store",
                 },
             )
         with open(target, "rb") as fh:
@@ -616,13 +617,13 @@ def make_server(port=None, host="127.0.0.1", session_root=None):
 
 def main():
     srv = make_server()
-    port = srv.server_address[1]
+    origin = srv.local_security.expected_origin
 
     ready = [p["id"] for p in gateway.available() if p["ready"]]
     present = [t["id"] for t in tools.status() if t["present"]]
 
     print("\n  Celina")
-    print(f"  http://localhost:{port}")
+    print(f"  {origin}")
     print(f"  providers ready : {', '.join(ready) or 'none - add a key to .env'}")
     print(f"  tools detected  : {', '.join(present) or 'none (optional)'}\n")
 

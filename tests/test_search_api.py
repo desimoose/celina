@@ -155,6 +155,7 @@ class SearchApiTest(unittest.TestCase):
         status, headers, body = self._request("GET", "/")
 
         self.assertEqual(status, 200)
+        self.assertEqual(headers.get("Cache-Control"), "no-store")
         self.assertIn("HttpOnly", headers.get("Set-Cookie"))
         self.assertIn("SameSite=Strict", headers.get("Set-Cookie"))
         self.assertIn("Path=/", headers.get("Set-Cookie"))

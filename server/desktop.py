@@ -41,10 +41,10 @@ def start_server():
 def run():
     import webview  # imported here so tests can load this module GUI-free
 
-    _srv, port = start_server()
+    srv, _port = start_server()
     webview.create_window(
         "Celina",
-        f"http://127.0.0.1:{port}",
+        srv.local_security.expected_origin,
         width=1280,
         height=820,
         min_size=(940, 600),

@@ -11,6 +11,7 @@ if SERVER not in sys.path:
 import events  # noqa: E402
 import orchestrator  # noqa: E402
 import sessions  # noqa: E402
+import verification  # noqa: E402
 
 
 class FakePlanner:
@@ -71,6 +72,7 @@ class SearchOrchestratorTest(unittest.TestCase):
         reader=None,
         gap_checker=None,
         synthesizer=None,
+        verifier=None,
     ):
         return orchestrator.SearchOrchestrator(
             event_bus=self.bus,
@@ -102,6 +104,7 @@ class SearchOrchestratorTest(unittest.TestCase):
                     "citations": [row.citation_id for row in evidence_rows],
                 }
             ),
+            verifier=verifier,
             max_selected_sources=3,
         )
 
@@ -213,6 +216,37 @@ class SearchOrchestratorTest(unittest.TestCase):
         for item in stored:
             template = orchestrator.STATUS_TEMPLATES[item["kind"]]
             self.assertTrue(template.matches(item["summary"]))
+
+    def test_verification_correction_remains_visible_in_trace(self):
+        class RejectingVerifier:
+            def verify(self, answer, evidence_rows):
+                return verification.VerificationResult(
+                    claims=(verification.ClaimVerification(
+                        claim_id="claim-1",
+                        text="Unsupported claim",
+                        citation_ids=("C99",),
+                        status="rejected",
+                        supporting_passage=None,
+                        reason="citation does not exist",
+                    ),),
+                    rejected_citations=("C99",),
+                    corrected_answer="Grounded answer.\n\n> Verification note: removed.",
+                    unresolved_conflicts=(),
+                )
+
+        engine = self.make_orchestrator(verifier=RejectingVerifier())
+        completed = engine.wait(engine.start(self.request()).run_id, timeout=2)
+
+        self.assertEqual(
+            completed.answer["answer"],
+            "Grounded answer.\n\n> Verification note: removed.",
+        )
+        kinds = [
+            item["kind"]
+            for item in self.store.list_events(self.session.session_id)
+        ]
+        self.assertIn("citation.rejected", kinds)
+        self.assertIn("answer.corrected", kinds)
 
 
 if __name__ == "__main__":

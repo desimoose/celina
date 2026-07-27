@@ -55,6 +55,15 @@ STATUS_TEMPLATES = {
     "synthesis.completed": StatusTemplate(
         "Drafted an answer from {evidence_count} read sources."
     ),
+    "citation.verified": StatusTemplate(
+        "Verified support for “{claim}”."
+    ),
+    "citation.rejected": StatusTemplate(
+        "Citation check rejected “{claim}”."
+    ),
+    "answer.corrected": StatusTemplate(
+        "Kept a visible correction after citation review."
+    ),
     "search.stopped": StatusTemplate("Stopped before starting another phase."),
     "search.completed": StatusTemplate("Research run completed."),
     "search.failed": StatusTemplate("Research run failed during {phase}."),
@@ -136,6 +145,7 @@ class SearchOrchestrator:
         reader,
         gap_checker,
         synthesizer,
+        verifier=None,
         max_selected_sources=6,
     ):
         self.event_bus = event_bus
@@ -144,6 +154,7 @@ class SearchOrchestrator:
         self.reader = reader
         self.gap_checker = gap_checker
         self.synthesizer = synthesizer
+        self.verifier = verifier
         self.max_selected_sources = max(1, int(max_selected_sources))
         self._runs = {}
         self._lock = threading.RLock()
@@ -293,6 +304,61 @@ class SearchOrchestrator:
                 evidence_count=len(run.evidence),
             )
             self._transition(run, "verifying")
+            if self.verifier is not None:
+                verification = self.verifier.verify(
+                    run.answer,
+                    tuple(run.evidence),
+                )
+                self._ensure_active(run)
+                for claim in verification.claims:
+                    kind = (
+                        "citation.verified"
+                        if claim.status == "supported"
+                        else "citation.rejected"
+                    )
+                    self._publish(
+                        run,
+                        kind,
+                        "verifying",
+                        claim=claim.text or claim.claim_id,
+                        severity=(
+                            "info"
+                            if claim.status == "supported"
+                            else "warning"
+                        ),
+                        details={
+                            "claim_id": claim.claim_id,
+                            "status": claim.status,
+                            "citation_ids": list(claim.citation_ids),
+                        },
+                    )
+                original_answer = (
+                    str(run.answer.get("answer") or "")
+                    if isinstance(run.answer, dict)
+                    else str(run.answer or "")
+                )
+                if verification.corrected_answer != original_answer:
+                    if isinstance(run.answer, dict):
+                        run.answer = {
+                            **run.answer,
+                            "answer": verification.corrected_answer,
+                        }
+                    else:
+                        run.answer = verification.corrected_answer
+                    self._publish(
+                        run,
+                        "answer.corrected",
+                        "verifying",
+                        severity="warning",
+                        details={
+                            "rejected_citations": list(
+                                verification.rejected_citations
+                            ),
+                            "unresolved_conflicts": list(
+                                verification.unresolved_conflicts
+                            ),
+                        },
+                    )
             self._transition(run, "completed")
             self._publish(run, "search.completed", "completed")
         except _StoppedRun:

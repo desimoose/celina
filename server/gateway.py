@@ -160,6 +160,15 @@ def _anthropic(spec, model, system, messages, max_tokens):
     return text, {
         "input_tokens": usage.get("input_tokens"),
         "output_tokens": usage.get("output_tokens"),
+        "cached_input_tokens": (
+            (usage.get("cache_read_input_tokens") or 0)
+            + (usage.get("cache_creation_input_tokens") or 0)
+            if (
+                usage.get("cache_read_input_tokens") is not None
+                or usage.get("cache_creation_input_tokens") is not None
+            )
+            else None
+        ),
     }
 
 
@@ -183,6 +192,9 @@ def _openai_compatible(spec, model, system, messages, max_tokens):
     return text, {
         "input_tokens": usage.get("prompt_tokens"),
         "output_tokens": usage.get("completion_tokens"),
+        "cached_input_tokens": (
+            usage.get("prompt_tokens_details") or {}
+        ).get("cached_tokens"),
     }
 
 

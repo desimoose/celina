@@ -174,6 +174,67 @@ class SessionStore:
             "traffic_event_ids": json.loads(row["traffic_event_ids_json"]),
         } for row in rows]
 
+    def append_token_usage(self, usage):
+        session_id = usage["session_id"]
+        database = self._database(session_id)
+        if not os.path.isfile(database):
+            raise KeyError("unknown session")
+        with self._connection(database) as connection:
+            connection.execute(
+                """
+                INSERT INTO token_usage (
+                    usage_id, session_id, correlation_id, provider, model,
+                    input_tokens, output_tokens, cached_input_tokens,
+                    context_limit, is_estimated, recorded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    usage["usage_id"],
+                    session_id,
+                    usage["correlation_id"],
+                    usage["provider"],
+                    usage["model"],
+                    usage.get("input_tokens"),
+                    usage.get("output_tokens"),
+                    usage.get("cached_input_tokens"),
+                    usage.get("context_limit"),
+                    1 if usage.get("is_estimated") else 0,
+                    usage["recorded_at"],
+                ),
+            )
+            connection.execute(
+                "UPDATE session SET last_active_at = ?",
+                (_utc_now(),),
+            )
+
+    def list_token_usage(self, session_id):
+        database = self._database(session_id)
+        if not os.path.isfile(database):
+            return []
+        with self._connection(database) as connection:
+            rows = connection.execute(
+                """
+                SELECT usage_id, session_id, correlation_id, provider, model,
+                       input_tokens, output_tokens, cached_input_tokens,
+                       context_limit, is_estimated, recorded_at
+                FROM token_usage
+                ORDER BY recorded_at, usage_id
+                """
+            ).fetchall()
+        return [{
+            "usage_id": row["usage_id"],
+            "session_id": row["session_id"],
+            "correlation_id": row["correlation_id"],
+            "provider": row["provider"],
+            "model": row["model"],
+            "input_tokens": row["input_tokens"],
+            "output_tokens": row["output_tokens"],
+            "cached_input_tokens": row["cached_input_tokens"],
+            "context_limit": row["context_limit"],
+            "is_estimated": bool(row["is_estimated"]),
+            "recorded_at": row["recorded_at"],
+        } for row in rows]
+
     def delete(self, session_id):
         directory = self._directory(session_id, create=False)
         if not os.path.exists(directory):
@@ -276,6 +337,22 @@ class SessionStore:
             );
             CREATE INDEX event_session_sequence
             ON event(session_id, sequence);
+
+            CREATE TABLE token_usage (
+                usage_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                correlation_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                cached_input_tokens INTEGER,
+                context_limit INTEGER,
+                is_estimated INTEGER NOT NULL,
+                recorded_at TEXT NOT NULL
+            );
+            CREATE INDEX token_usage_session_recorded
+            ON token_usage(session_id, recorded_at);
             """
         )
         current = connection.execute(

@@ -326,7 +326,13 @@ def _dedupe_key(rec):
     return "".join(ch for ch in title if ch.isalnum())[:80]
 
 
-def search(query, limit=8, sources=None, traffic_context=None):
+def search(
+    query,
+    limit=8,
+    sources=None,
+    traffic_context=None,
+    event_sink=None,
+):
     """Search every registered source, merge, dedupe, and rank.
 
     Returns (results, notes) - notes records any source that failed, so the
@@ -355,6 +361,12 @@ def search(query, limit=8, sources=None, traffic_context=None):
         except (urllib.error.URLError, urllib.error.HTTPError, ET.ParseError,
                 json.JSONDecodeError, TimeoutError) as e:
             notes.append(f"{name} didn't answer ({type(e).__name__})")
+            if event_sink is not None:
+                event_sink({
+                    "kind": "source.failed",
+                    "source": name,
+                    "error_class": type(e).__name__,
+                })
 
     results = list(seen.values())
 

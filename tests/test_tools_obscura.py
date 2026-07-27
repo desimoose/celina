@@ -1,12 +1,19 @@
 import os
 import sys
+import tempfile
 import unittest
+import urllib.parse
+import subprocess
+from unittest import mock
 
 SERVER = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "server"))
 if SERVER not in sys.path:
     sys.path.insert(0, SERVER)
 
+import redaction  # noqa: E402
+import sessions  # noqa: E402
 import paths  # noqa: E402
+import traffic  # noqa: E402
 import tools  # noqa: E402
 
 
@@ -28,6 +35,95 @@ class FindObscuraTest(unittest.TestCase):
             )
         finally:
             os.environ.pop("CELINA_HOME", None)
+
+
+class ObscuraTrafficTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.store = sessions.SessionStore(self.temp.name)
+        self.session = self.store.create()
+        self.recorder = traffic.TrafficRecorder(self.store)
+        self.secret = "obscura-canary-secret-551"
+        self.context = traffic.TrafficContext(
+            session_id=self.session.session_id,
+            run_id="run-1",
+            correlation_id="correlation-1",
+            recorder=self.recorder,
+            redactor=redaction.Redactor([self.secret]),
+        )
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    @mock.patch("tools.find_obscura", return_value=r"C:\vendor\obscura.exe")
+    @mock.patch("tools.subprocess.run")
+    def test_dump_records_safe_process_metadata_and_redacted_output(
+        self,
+        run,
+        _find,
+    ):
+        run.return_value = mock.Mock(
+            returncode=0,
+            stdout=f"<html>{self.secret}</html>".encode(),
+            stderr=b"",
+        )
+
+        output = tools.obscura_dump(
+            f"https://example.test/page?token={self.secret}",
+            traffic_context=self.context,
+        )
+
+        self.assertIn(self.secret, output)
+        record = self.recorder.list(self.session.session_id)[0]
+        self.assertEqual(record.transport, "process")
+        self.assertEqual(record.method_or_action, "page.fetch")
+        self.assertEqual(record.status, 0)
+        self.assertIn("[REDACTED]", urllib.parse.unquote(record.destination))
+        self.assertIn(b"[REDACTED]", record.response_body)
+        self.assertNotIn(b"C:\\vendor\\obscura.exe", record.request_body)
+        self.assertNotIn(self.secret.encode(), record.request_body)
+
+    @mock.patch("tools.find_obscura", return_value=r"C:\vendor\obscura.exe")
+    @mock.patch("tools.subprocess.run")
+    def test_dump_records_nonzero_exit_before_raising(self, run, _find):
+        run.return_value = mock.Mock(
+            returncode=7,
+            stdout=b"",
+            stderr=f"failed with {self.secret}".encode(),
+        )
+
+        with self.assertRaises(RuntimeError):
+            tools.obscura_dump(
+                "https://example.test/page",
+                traffic_context=self.context,
+            )
+
+        record = self.recorder.list(self.session.session_id)[0]
+        self.assertEqual(record.status, 7)
+        self.assertEqual(record.error_class, "ProcessError")
+        self.assertNotIn(self.secret, record.error_summary)
+        self.assertIn(b"[REDACTED]", record.response_body)
+
+    @mock.patch("tools.find_obscura", return_value=r"C:\vendor\obscura.exe")
+    @mock.patch("tools.subprocess.run")
+    def test_dump_records_timeout_before_raising(self, run, _find):
+        run.side_effect = subprocess.TimeoutExpired(
+            cmd="obscura",
+            timeout=1,
+            stderr=f"waited for {self.secret}".encode(),
+        )
+
+        with self.assertRaises(subprocess.TimeoutExpired):
+            tools.obscura_dump(
+                "https://example.test/page",
+                timeout=1,
+                traffic_context=self.context,
+            )
+
+        record = self.recorder.list(self.session.session_id)[0]
+        self.assertIsNone(record.status)
+        self.assertEqual(record.error_class, "ProcessError")
+        self.assertNotIn(self.secret, record.error_summary)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 SERVER = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "server"))
 if SERVER not in sys.path:
@@ -112,6 +113,65 @@ class WebSearchFallbackTest(unittest.TestCase):
         rows, engine = scanner.web_search("x", fetch_html)
         self.assertEqual(rows, [])
         self.assertIn("none", engine)
+
+
+class ScannerObservabilityTest(unittest.TestCase):
+    @mock.patch("tools.obscura_dump")
+    @mock.patch("scanner.finder.search", return_value=([], []))
+    def test_default_fetches_forward_traffic_context(
+        self,
+        _search,
+        obscura_dump,
+    ):
+        context = object()
+
+        def output(url, **kwargs):
+            if "wikipedia.org" in url:
+                return '{"query":{"search":[]}}'
+            if "news.google.com" in url:
+                return "<rss><channel></channel></rss>"
+            return "<html>no results</html>"
+
+        obscura_dump.side_effect = output
+
+        scanner.scan("caffeine", traffic_context=context)
+
+        self.assertGreaterEqual(obscura_dump.call_count, 5)
+        self.assertTrue(
+            all(
+                call.kwargs["traffic_context"] is context
+                for call in obscura_dump.call_args_list
+            )
+        )
+
+    @mock.patch("scanner.finder.search", side_effect=RuntimeError("offline"))
+    def test_source_failure_emits_event_and_scan_continues(self, _search):
+        emitted = []
+
+        result = scanner.scan(
+            "caffeine",
+            fetch_html=lambda _url: (_ for _ in ()).throw(
+                RuntimeError("offline")
+            ),
+            fetch_raw=lambda _url: "{}",
+            event_sink=emitted.append,
+        )
+
+        self.assertIn("research:", result["notes"][0])
+        self.assertTrue(
+            any(
+                event["kind"] == "source.failed"
+                and event["source"] == "research"
+                for event in emitted
+            )
+        )
+        self.assertTrue(
+            any(
+                event["kind"] == "source.failed"
+                and event["source"] == "duckduckgo"
+                for event in emitted
+            )
+        )
 
 
 if __name__ == "__main__":

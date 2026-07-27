@@ -14,12 +14,14 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
 import pdf
 import paths
+import traffic
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VENDOR = os.path.join(ROOT, "vendor")
@@ -116,7 +118,14 @@ def _fetch_obscura(binary, url, timeout=30):
     return _BLANKS.sub("\n\n", out)
 
 
-def obscura_dump(url, dump="html", stealth=True, timeout=30):
+def obscura_dump(
+    url,
+    dump="html",
+    stealth=True,
+    timeout=30,
+    traffic_context=None,
+    action_type="page.fetch",
+):
     """Raw Obscura dump for the Scanner: return stdout as text.
 
     dump="html"     -> stealth browser render, raw HTML (parse search results)
@@ -130,13 +139,72 @@ def obscura_dump(url, dump="html", stealth=True, timeout=30):
     if stealth:
         args.append("--stealth")
     args += ["fetch", "--dump", dump, "--timeout", str(timeout), url]
+    traffic_event_id = None
+    request_redactions = ()
+    started = time.monotonic()
+    if traffic_context is not None:
+        if (
+            traffic_context.cancellation is not None
+            and traffic_context.cancellation.is_set()
+        ):
+            raise traffic.TrafficCancelled(
+                "request cancelled before opening process"
+            )
+        traffic_event_id, request_redactions = (
+            traffic_context.recorder.start_process(
+                traffic_context,
+                url,
+                action_type,
+                {
+                    "tool": "obscura",
+                    "dump": dump,
+                    "stealth": bool(stealth),
+                    "timeout_seconds": timeout,
+                },
+            )
+        )
     # Capture bytes and decode utf-8 ourselves: on Windows, text-mode capture can
     # mangle multibyte chars (curly quotes in RSS) via the console codepage.
-    proc = subprocess.run(args, capture_output=True, timeout=timeout + 60)
+    try:
+        proc = subprocess.run(args, capture_output=True, timeout=timeout + 60)
+    except subprocess.TimeoutExpired as error:
+        if traffic_context is not None:
+            detail = error.stderr or b"obscura timed out"
+            if isinstance(detail, str):
+                detail = detail.encode("utf-8")
+            traffic_context.recorder.complete_process(
+                traffic_context,
+                traffic_event_id,
+                started,
+                None,
+                detail,
+                request_redactions,
+                "obscura timed out",
+            )
+        raise
     if proc.returncode != 0:
         err = (proc.stderr or b"").decode("utf-8", "replace").strip()
+        if traffic_context is not None:
+            traffic_context.recorder.complete_process(
+                traffic_context,
+                traffic_event_id,
+                started,
+                proc.returncode,
+                proc.stderr or b"",
+                request_redactions,
+                err[:300] or "obscura exited non-zero",
+            )
         raise RuntimeError(err[:300] or "obscura exited non-zero")
     out = (proc.stdout or b"").decode("utf-8", "replace").strip()
+    if traffic_context is not None:
+        traffic_context.recorder.complete_process(
+            traffic_context,
+            traffic_event_id,
+            started,
+            proc.returncode,
+            proc.stdout or b"",
+            request_redactions,
+        )
     if not out:
         raise RuntimeError("empty dump")
     return out

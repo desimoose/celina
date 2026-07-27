@@ -25,6 +25,10 @@ class MalformedResponseError(Exception):
     pass
 
 
+class ProcessError(Exception):
+    pass
+
+
 @dataclass(frozen=True)
 class TrafficContext:
     session_id: str
@@ -106,6 +110,61 @@ class TrafficRecorder:
             "redactions": redactions,
         })
         return event_id, tuple(redactions)
+
+    def start_process(self, context, destination, action_type, metadata):
+        safe_url = context.redactor.redact_url(destination)
+        body = json.dumps(
+            metadata,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        redacted_body = context.redactor.redact_body("application/json", body)
+        event_id = str(uuid.uuid4())
+        redactions = list(redacted_body.redactions)
+        if safe_url != destination:
+            redactions.append("sensitive-url")
+        self.store.start_traffic({
+            "traffic_event_id": event_id,
+            "session_id": context.session_id,
+            "run_id": context.run_id,
+            "correlation_id": context.correlation_id,
+            "direction": "outbound",
+            "transport": "process",
+            "destination": safe_url,
+            "method_or_action": action_type,
+            "started_at": _utc_now(),
+            "request_bytes": len(body),
+            "request_headers": {},
+            "request_body": redacted_body.body,
+            "redactions": redactions,
+        })
+        return event_id, tuple(redactions)
+
+    def complete_process(
+        self,
+        context,
+        traffic_event_id,
+        started,
+        exit_status,
+        output,
+        redactions=(),
+        error_summary=None,
+    ):
+        error = (
+            ProcessError(error_summary or "process exited non-zero")
+            if exit_status != 0
+            else None
+        )
+        self.complete(
+            context,
+            traffic_event_id,
+            started,
+            status=exit_status,
+            headers={"content-type": "text/plain; charset=utf-8"},
+            body=output,
+            redactions=redactions,
+            error=error,
+        )
 
     def complete(
         self,

@@ -132,7 +132,7 @@ _ENGINES = [
 ]
 
 
-def web_search(query, fetch_html, limit=6):
+def web_search(query, fetch_html, limit=6, event_sink=None):
     """Try each search backend in turn; return (results, engine_used).
     On empty/error, fall through to the next - the resilience mechanism."""
     tried = []
@@ -144,6 +144,7 @@ def web_search(query, fetch_html, limit=6):
             tried.append(f"{name}: 0")
         except Exception as e:
             tried.append(f"{name}: {str(e)[:50]}")
+            _emit_source_failure(event_sink, name, e)
     return [], "none (" + "; ".join(tried) + ")"
 
 
@@ -208,27 +209,57 @@ def _grounding_system(items):
     return "\n".join(lines)
 
 
-def scan(query, gateway=None, provider=None, fetch_html=None, fetch_raw=None):
+def scan(
+    query,
+    gateway=None,
+    provider=None,
+    fetch_html=None,
+    fetch_raw=None,
+    traffic_context=None,
+    event_sink=None,
+):
     """Fan out across keyless sources, blend into one candidate list.
     fetch_html/fetch_raw are injected (default: Obscura via tools)."""
     if fetch_html is None or fetch_raw is None:
         import tools
         if fetch_html is None:
-            fetch_html = lambda u: tools.obscura_dump(u, dump="html", stealth=True)
+            fetch_html = lambda u: tools.obscura_dump(
+                u,
+                dump="html",
+                stealth=True,
+                traffic_context=traffic_context,
+                action_type="search.query",
+            )
         if fetch_raw is None:
-            fetch_raw = lambda u: tools.obscura_dump(u, dump="original", stealth=False)
+            fetch_raw = lambda u: tools.obscura_dump(
+                u,
+                dump="original",
+                stealth=False,
+                traffic_context=traffic_context,
+                action_type="search.query",
+            )
 
     results, notes = [], []
 
     # research (scholarly)
     try:
-        hits, fnotes = finder.search(query, limit=6)
+        hits, fnotes = (
+            finder.search(
+                query,
+                limit=6,
+                traffic_context=traffic_context,
+                event_sink=event_sink,
+            )
+            if traffic_context is not None or event_sink is not None
+            else finder.search(query, limit=6)
+        )
         for h in hits:
             h["kind"] = "research"
         results.extend(hits)
         notes.extend(fnotes or [])
     except Exception as e:
-        notes.append(f"research: {str(e)[:60]}")
+        notes.append(f"research: {type(e).__name__}")
+        _emit_source_failure(event_sink, "research", e)
 
     # context (Wikipedia) - one item, placed first
     try:
@@ -237,18 +268,25 @@ def scan(query, gateway=None, provider=None, fetch_html=None, fetch_raw=None):
             wiki["kind"] = "wikipedia"
             results.insert(0, wiki)
     except Exception as e:
-        notes.append(f"wikipedia: {str(e)[:60]}")
+        notes.append(f"wikipedia: {type(e).__name__}")
+        _emit_source_failure(event_sink, "wikipedia", e)
 
     # web
     try:
-        web, engine = web_search(query, fetch_html, limit=6)
+        web, engine = web_search(
+            query,
+            fetch_html,
+            limit=6,
+            event_sink=event_sink,
+        )
         for w in web:
             w["kind"] = "web"
         results.extend(web)
         if not web:
             notes.append(f"web: {engine}")
     except Exception as e:
-        notes.append(f"web: {str(e)[:60]}")
+        notes.append(f"web: {type(e).__name__}")
+        _emit_source_failure(event_sink, "web", e)
 
     # recent (news)
     try:
@@ -257,7 +295,8 @@ def scan(query, gateway=None, provider=None, fetch_html=None, fetch_raw=None):
             n["kind"] = "news"
         results.extend(news)
     except Exception as e:
-        notes.append(f"news: {str(e)[:60]}")
+        notes.append(f"news: {type(e).__name__}")
+        _emit_source_failure(event_sink, "news", e)
 
     out = {"query": query, "results": results, "notes": notes, "answer": None}
 
@@ -267,8 +306,19 @@ def scan(query, gateway=None, provider=None, fetch_html=None, fetch_raw=None):
                 provider,
                 messages=[{"role": "user", "content": query}],
                 system=_grounding_system(results[:10]),
+                traffic_context=traffic_context,
             )
             out.update(answer=reply["text"], model=reply["model"], provider=reply["provider"])
         except Exception as e:
             out["answer_error"] = str(e)
     return out
+
+
+def _emit_source_failure(event_sink, source, error):
+    if event_sink is None:
+        return
+    event_sink({
+        "kind": "source.failed",
+        "source": source,
+        "error_class": type(error).__name__,
+    })

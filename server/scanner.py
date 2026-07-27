@@ -60,6 +60,37 @@ def parse_ddg_html(html_text, limit=8):
     return out
 
 
+_DDG_LITE_A = re.compile(
+    r'<a[^>]*rel=["\']nofollow["\'][^>]*href=["\']([^"\']+)["\'][^>]*>'
+    r'(.*?)</a>',
+    re.S | re.I,
+)
+_DDG_LITE_SNIP = re.compile(
+    r'<td[^>]*class=["\'][^"\']*result-snippet[^"\']*["\'][^>]*>'
+    r'(.*?)</td>',
+    re.S | re.I,
+)
+
+
+def parse_ddg_lite(html_text, limit=8):
+    """Parse DuckDuckGo's low-script Lite results page."""
+    links = _DDG_LITE_A.findall(html_text)
+    snips = _DDG_LITE_SNIP.findall(html_text)
+    out = []
+    for i, (href, title) in enumerate(links):
+        url = _ddg_real_url(href)
+        if not url.startswith("http"):
+            continue
+        out.append({
+            "title": _clean(title),
+            "url": url,
+            "snippet": _clean(snips[i]) if i < len(snips) else "",
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
 _BING_H2 = re.compile(r"<h2[^>]*>\s*<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>", re.S)
 
 
@@ -92,6 +123,9 @@ _ENGINES = [
     ("duckduckgo",
      lambda q: "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(q),
      parse_ddg_html),
+    ("duckduckgo-lite",
+     lambda q: "https://lite.duckduckgo.com/lite/?q=" + urllib.parse.quote(q),
+     parse_ddg_lite),
     ("bing",
      lambda q: "https://www.bing.com/search?q=" + urllib.parse.quote(q),
      parse_bing),

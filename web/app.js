@@ -142,6 +142,7 @@ async function openSettings() {
         <div class="set-label"><span class="set-dot ${p.has_key || p.local ? "on" : ""}"></span>${escapeHtml(p.label)}${p.local ? " (local, no key)" : ""}</div>
         ${keyField}
         <input class="set-model" type="text" data-model="${p.model_env}"
+               value="${p.model_overridden ? escapeHtml(p.model) : ""}"
                placeholder="model: ${escapeHtml(p.model)}" />
       </div>`;
   }).join("");
@@ -192,7 +193,7 @@ async function saveSettings() {
     else if (el.value !== "") keys[el.dataset.key] = el.value;    // replace
   }
   for (const el of document.querySelectorAll("#settings-body input[data-model]")) {
-    if (el.value !== "") models[el.dataset.model] = el.value;
+    models[el.dataset.model] = el.value;
   }
   const body = { keys, models };
   const finder = $("set-finder").value;

@@ -22,11 +22,12 @@ import xml.etree.ElementTree as ET
 
 TIMEOUT = 20
 
-# OpenAlex gives faster, more reliable service to requests that identify a
-# contact - the "polite pool". Optional, set FINDER_CONTACT_EMAIL to use it.
-CONTACT = os.environ.get("FINDER_CONTACT_EMAIL", "").strip()
-
 UA = "Celina-Finder/0.1 (open-access research tool)"
+
+
+def contact_email():
+    """Read the optional contact at call time, after app.load_env()."""
+    return os.environ.get("FINDER_CONTACT_EMAIL", "").strip()
 
 
 def _get(url):
@@ -70,8 +71,9 @@ def openalex(query, limit):
     """OpenAlex: 250M+ works, no key, includes open-access status + PDF link.
     The spine of the Finder."""
     params = {"search": query, "per_page": limit, "sort": "relevance_score:desc"}
-    if CONTACT:
-        params["mailto"] = CONTACT
+    contact = contact_email()
+    if contact:
+        params["mailto"] = contact
     url = "https://api.openalex.org/works?" + urllib.parse.urlencode(params)
     data = _get_json(url)
     out = []
@@ -190,8 +192,9 @@ def crossref(query, limit):
               "select": ("title,author,issued,container-title,DOI,URL,"
                          "is-referenced-by-count,abstract")}
     url = "https://api.crossref.org/works?" + urllib.parse.urlencode(params)
-    if CONTACT:
-        url += "&mailto=" + urllib.parse.quote(CONTACT)
+    contact = contact_email()
+    if contact:
+        url += "&mailto=" + urllib.parse.quote(contact)
     data = _get_json(url)
     out = []
     for it in (data.get("message") or {}).get("items", []):
@@ -252,7 +255,7 @@ def unpaywall_resolve(doi, email=None):
     """Unpaywall: given a DOI, find the legal open-access copy. Not a search
     engine - a resolver. This is what turns a paywalled result into a readable
     one. Requires a contact email (free, no key): set FINDER_CONTACT_EMAIL."""
-    email = email or CONTACT
+    email = email or contact_email()
     if not doi or not email:
         return None
     url = ("https://api.unpaywall.org/v2/"
@@ -318,7 +321,7 @@ def search(query, limit=8, sources=None):
     # Enrichment: for hits that have a DOI but no open-access link, ask
     # Unpaywall for the free copy. This is what makes paywalled results
     # readable. Capped so a big result set can't stall the search.
-    if CONTACT:
+    if contact_email():
         for r in results[:15]:
             if r.get("doi") and not r.get("oa_url"):
                 try:

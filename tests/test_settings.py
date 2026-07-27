@@ -43,7 +43,8 @@ class UpdateEnvTest(unittest.TestCase):
         with open(env, "w", encoding="utf-8") as fh:
             fh.write("# comment\nOPENAI_API_KEY=old\nXAI_API_KEY=keep\n")
         app.update_env({"OPENAI_API_KEY": "new"})
-        text = open(env, encoding="utf-8").read()
+        with open(env, encoding="utf-8") as fh:
+            text = fh.read()
         self.assertIn("OPENAI_API_KEY=new", text)
         self.assertNotIn("OPENAI_API_KEY=old", text)
         self.assertIn("XAI_API_KEY=keep", text)   # unrelated key untouched
@@ -55,7 +56,8 @@ class UpdateEnvTest(unittest.TestCase):
         with open(env, "w", encoding="utf-8") as fh:
             fh.write("XAI_API_KEY=keep\n")
         app.update_env({"OPENAI_API_KEY": "added"})
-        text = open(env, encoding="utf-8").read()
+        with open(env, encoding="utf-8") as fh:
+            text = fh.read()
         self.assertIn("OPENAI_API_KEY=added", text)
         self.assertIn("XAI_API_KEY=keep", text)
 
@@ -65,7 +67,8 @@ class UpdateEnvTest(unittest.TestCase):
         with open(env, "w", encoding="utf-8") as fh:
             fh.write("OPENAI_API_KEY=old\n")
         app.update_env({"OPENAI_API_KEY": ""})
-        text = open(env, encoding="utf-8").read()
+        with open(env, encoding="utf-8") as fh:
+            text = fh.read()
         self.assertIn("OPENAI_API_KEY=", text)
         self.assertNotIn("OPENAI_API_KEY=old", text)
 
@@ -103,6 +106,19 @@ class SettingsStateTest(unittest.TestCase):
         self.assertIsNone(rows["ollama"]["key_env"])
 
 
+class SettingsUiSourceTest(unittest.TestCase):
+    def test_empty_model_field_is_sent_to_clear_override(self):
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        with open(os.path.join(root, "web", "app.js"), encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertNotIn('if (el.value !== "") models[', source)
+        self.assertIn('models[el.dataset.model] = el.value;', source)
+        self.assertIn(
+            'value="${p.model_overridden ? escapeHtml(p.model) : ""}"',
+            source,
+        )
+
+
 class SettingsRoutesTest(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("CELINA_HOME", None)
@@ -131,7 +147,8 @@ class SettingsRoutesTest(unittest.TestCase):
         try:
             self._post(port, {"keys": {"OPENAI_API_KEY": "sk-livevalue99"}})
             self.assertEqual(gateway.key_for("openai"), "sk-livevalue99")
-            text = open(os.path.join(home, ".env"), encoding="utf-8").read()
+            with open(os.path.join(home, ".env"), encoding="utf-8") as fh:
+                text = fh.read()
             self.assertIn("OPENAI_API_KEY=sk-livevalue99", text)
         finally:
             srv.shutdown(); srv.server_close()
@@ -160,7 +177,8 @@ class SettingsRoutesTest(unittest.TestCase):
         try:
             self._post(port, {"keys": {"BOGUS_ENV": "x"}})
             self.assertIsNone(os.environ.get("BOGUS_ENV"))
-            text = open(os.path.join(home, ".env"), encoding="utf-8").read()
+            with open(os.path.join(home, ".env"), encoding="utf-8") as fh:
+                text = fh.read()
             self.assertNotIn("BOGUS_ENV", text)
         finally:
             srv.shutdown(); srv.server_close()
@@ -173,6 +191,7 @@ class SettingsRoutesTest(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as ctx:
                 self._post(port, {"keys": {"OPENAI_API_KEY": 123}})
             self.assertEqual(ctx.exception.code, 400)
+            ctx.exception.close()
         finally:
             srv.shutdown(); srv.server_close()
 

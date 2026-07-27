@@ -23,6 +23,25 @@ class ParserTest(unittest.TestCase):
         self.assertNotIn("duckduckgo.com/l/", rows[0]["url"])   # redirect decoded
         self.assertTrue(rows[0]["title"])
 
+    def test_ddg_lite(self):
+        html = """
+        <table>
+          <tr>
+            <td><a rel="nofollow" href="https://example.com/one">First result</a></td>
+          </tr>
+          <tr><td class="result-snippet">A useful first snippet.</td></tr>
+          <tr>
+            <td><a rel="nofollow" href="https://example.org/two">Second result</a></td>
+          </tr>
+          <tr><td class="result-snippet">Another useful snippet.</td></tr>
+        </table>
+        """
+        rows = scanner.parse_ddg_lite(html, limit=6)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["title"], "First result")
+        self.assertEqual(rows[0]["url"], "https://example.com/one")
+        self.assertEqual(rows[0]["snippet"], "A useful first snippet.")
+
     def test_bing(self):
         rows = scanner.parse_bing(_fx("bing.html"), limit=6)
         self.assertGreaterEqual(len(rows), 3)
@@ -44,6 +63,26 @@ class ParserTest(unittest.TestCase):
 
 
 class WebSearchFallbackTest(unittest.TestCase):
+    def test_falls_through_ddg_html_to_ddg_lite_before_bing(self):
+        calls = []
+        lite = """
+        <a rel="nofollow" href="https://example.com/lite">Lite result</a>
+        <td class="result-snippet">Found by the lite endpoint.</td>
+        """
+
+        def fetch_html(url):
+            calls.append(url)
+            if "html.duckduckgo" in url:
+                return "<html>no results</html>"
+            if "lite.duckduckgo" in url:
+                return lite
+            raise AssertionError("Bing should not be reached")
+
+        rows, engine = scanner.web_search("caffeine sleep", fetch_html, limit=5)
+        self.assertEqual(engine, "duckduckgo-lite")
+        self.assertEqual(rows[0]["url"], "https://example.com/lite")
+        self.assertEqual(len(calls), 2)
+
     def test_falls_through_to_bing_when_ddg_empty(self):
         calls = []
 
@@ -58,7 +97,7 @@ class WebSearchFallbackTest(unittest.TestCase):
         rows, engine = scanner.web_search("caffeine sleep", fetch_html, limit=5)
         self.assertEqual(engine, "bing")
         self.assertGreaterEqual(len(rows), 3)
-        self.assertEqual(len(calls), 2)  # tried DDG, then Bing
+        self.assertEqual(len(calls), 3)  # DDG HTML, DDG Lite, then Bing
 
     def test_uses_ddg_when_it_works(self):
         def fetch_html(url):

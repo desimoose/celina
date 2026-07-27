@@ -235,6 +235,119 @@ class SessionStore:
             "recorded_at": row["recorded_at"],
         } for row in rows]
 
+    def start_traffic(self, item):
+        session_id = item["session_id"]
+        database = self._database(session_id)
+        if not os.path.isfile(database):
+            raise KeyError("unknown session")
+        with self._connection(database) as connection:
+            connection.execute(
+                """
+                INSERT INTO traffic (
+                    traffic_event_id, session_id, run_id, correlation_id,
+                    direction, transport, destination, method_or_action,
+                    started_at, request_bytes, request_headers_json,
+                    request_body, redactions_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item["traffic_event_id"],
+                    session_id,
+                    item["run_id"],
+                    item["correlation_id"],
+                    item["direction"],
+                    item["transport"],
+                    item["destination"],
+                    item["method_or_action"],
+                    item["started_at"],
+                    item["request_bytes"],
+                    json.dumps(item["request_headers"], separators=(",", ":")),
+                    item["request_body"],
+                    json.dumps(item["redactions"], separators=(",", ":")),
+                ),
+            )
+
+    def complete_traffic(self, session_id, traffic_event_id, changes):
+        database = self._database(session_id)
+        if not os.path.isfile(database):
+            raise KeyError("unknown session")
+        with self._connection(database) as connection:
+            cursor = connection.execute(
+                """
+                UPDATE traffic
+                SET completed_at = ?, status = ?, duration_ms = ?,
+                    response_bytes = ?, response_headers_json = ?,
+                    response_body = ?, redactions_json = ?,
+                    error_class = ?, error_summary = ?
+                WHERE traffic_event_id = ?
+                """,
+                (
+                    changes["completed_at"],
+                    changes.get("status"),
+                    changes["duration_ms"],
+                    changes.get("response_bytes"),
+                    json.dumps(
+                        changes.get("response_headers") or {},
+                        separators=(",", ":"),
+                    ),
+                    changes.get("response_body") or b"",
+                    json.dumps(
+                        changes.get("redactions") or [],
+                        separators=(",", ":"),
+                    ),
+                    changes.get("error_class"),
+                    changes.get("error_summary"),
+                    traffic_event_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("unknown traffic event")
+            connection.execute(
+                "UPDATE session SET last_active_at = ?",
+                (_utc_now(),),
+            )
+
+    def list_traffic(self, session_id):
+        database = self._database(session_id)
+        if not os.path.isfile(database):
+            return []
+        with self._connection(database) as connection:
+            rows = connection.execute(
+                """
+                SELECT traffic_event_id, session_id, run_id, correlation_id,
+                       direction, transport, destination, method_or_action,
+                       started_at, completed_at, status, duration_ms,
+                       request_bytes, response_bytes, request_headers_json,
+                       response_headers_json, request_body, response_body,
+                       redactions_json, error_class, error_summary
+                FROM traffic
+                ORDER BY started_at, traffic_event_id
+                """
+            ).fetchall()
+        return [{
+            "traffic_event_id": row["traffic_event_id"],
+            "session_id": row["session_id"],
+            "run_id": row["run_id"],
+            "correlation_id": row["correlation_id"],
+            "direction": row["direction"],
+            "transport": row["transport"],
+            "destination": row["destination"],
+            "method_or_action": row["method_or_action"],
+            "started_at": row["started_at"],
+            "completed_at": row["completed_at"],
+            "status": row["status"],
+            "duration_ms": row["duration_ms"],
+            "request_bytes": row["request_bytes"],
+            "response_bytes": row["response_bytes"],
+            "request_headers": json.loads(row["request_headers_json"]),
+            "response_headers": json.loads(row["response_headers_json"] or "{}"),
+            "request_body": bytes(row["request_body"] or b""),
+            "response_body": bytes(row["response_body"] or b""),
+            "redactions": json.loads(row["redactions_json"]),
+            "error_class": row["error_class"],
+            "error_summary": row["error_summary"],
+        } for row in rows]
+
     def delete(self, session_id):
         directory = self._directory(session_id, create=False)
         if not os.path.exists(directory):
@@ -353,6 +466,32 @@ class SessionStore:
             );
             CREATE INDEX token_usage_session_recorded
             ON token_usage(session_id, recorded_at);
+
+            CREATE TABLE traffic (
+                traffic_event_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                correlation_id TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                transport TEXT NOT NULL,
+                destination TEXT NOT NULL,
+                method_or_action TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                status INTEGER,
+                duration_ms INTEGER,
+                request_bytes INTEGER NOT NULL,
+                response_bytes INTEGER,
+                request_headers_json TEXT NOT NULL,
+                response_headers_json TEXT,
+                request_body BLOB NOT NULL,
+                response_body BLOB,
+                redactions_json TEXT NOT NULL,
+                error_class TEXT,
+                error_summary TEXT
+            );
+            CREATE INDEX traffic_session_started
+            ON traffic(session_id, started_at);
             """
         )
         current = connection.execute(

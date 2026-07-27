@@ -20,6 +20,8 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
+import traffic
+
 TIMEOUT = 20
 
 UA = "Celina-Finder/0.1 (open-access research tool)"
@@ -30,14 +32,23 @@ def contact_email():
     return os.environ.get("FINDER_CONTACT_EMAIL", "").strip()
 
 
-def _get(url):
+def _get(url, traffic_context=None, action_type="research.search"):
     req = urllib.request.Request(url, headers={"User-Agent": UA})
+    if traffic_context is not None:
+        return traffic.http_request(
+            traffic_context,
+            req,
+            timeout=TIMEOUT,
+            action_type=action_type,
+        ).body
     with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
         return resp.read()
 
 
-def _get_json(url):
-    return json.loads(_get(url).decode("utf-8"))
+def _get_json(url, traffic_context=None, action_type="research.search"):
+    return json.loads(
+        _get(url, traffic_context, action_type).decode("utf-8")
+    )
 
 
 def _reconstruct_abstract(inverted_index):
@@ -67,7 +78,7 @@ def _record(**kw):
 
 # --- Sources -------------------------------------------------------------
 
-def openalex(query, limit):
+def openalex(query, limit, traffic_context=None):
     """OpenAlex: 250M+ works, no key, includes open-access status + PDF link.
     The spine of the Finder."""
     params = {"search": query, "per_page": limit, "sort": "relevance_score:desc"}
@@ -75,7 +86,11 @@ def openalex(query, limit):
     if contact:
         params["mailto"] = contact
     url = "https://api.openalex.org/works?" + urllib.parse.urlencode(params)
-    data = _get_json(url)
+    data = (
+        _get_json(url, traffic_context)
+        if traffic_context is not None
+        else _get_json(url)
+    )
     out = []
     for w in data.get("results", []):
         oa = w.get("open_access") or {}
@@ -102,7 +117,7 @@ def openalex(query, limit):
     return out
 
 
-def arxiv(query, limit):
+def arxiv(query, limit, traffic_context=None):
     """arXiv: preprints, no key. Where research shows up before the paywall
     closes. Returns Atom XML."""
     params = {
@@ -111,7 +126,11 @@ def arxiv(query, limit):
         "sortBy": "relevance",
     }
     url = "https://export.arxiv.org/api/query?" + urllib.parse.urlencode(params)
-    raw = _get(url)
+    raw = (
+        _get(url, traffic_context)
+        if traffic_context is not None
+        else _get(url)
+    )
     ns = {"a": "http://www.w3.org/2005/Atom"}
     root = ET.fromstring(raw)
     out = []
@@ -151,13 +170,17 @@ def _strip_tags(text):
     return (clean[:1200] + ("..." if len(clean) > 1200 else "")) or None
 
 
-def europepmc(query, limit):
+def europepmc(query, limit, traffic_context=None):
     """Europe PMC: life-sciences literature with full-text links, no key."""
     params = {"query": query, "format": "json",
               "resultType": "core", "pageSize": limit}
     url = ("https://www.ebi.ac.uk/europepmc/webservices/rest/search?"
            + urllib.parse.urlencode(params))
-    data = _get_json(url)
+    data = (
+        _get_json(url, traffic_context)
+        if traffic_context is not None
+        else _get_json(url)
+    )
     out = []
     for r in (data.get("resultList") or {}).get("result", []):
         oa_url = None
@@ -185,7 +208,7 @@ def europepmc(query, limit):
     return out
 
 
-def crossref(query, limit):
+def crossref(query, limit, traffic_context=None):
     """Crossref: the registry of record for DOIs, no key. No OA link itself -
     Unpaywall enrichment fills that in."""
     params = {"query": query, "rows": limit,
@@ -195,7 +218,11 @@ def crossref(query, limit):
     contact = contact_email()
     if contact:
         url += "&mailto=" + urllib.parse.quote(contact)
-    data = _get_json(url)
+    data = (
+        _get_json(url, traffic_context)
+        if traffic_context is not None
+        else _get_json(url)
+    )
     out = []
     for it in (data.get("message") or {}).get("items", []):
         dp = ((it.get("issued") or {}).get("date-parts") or [[None]])
@@ -216,12 +243,16 @@ def crossref(query, limit):
     return out
 
 
-def doaj(query, limit):
+def doaj(query, limit, traffic_context=None):
     """DOAJ: the Directory of Open Access Journals, no key. Every result is
     open access by definition."""
     url = ("https://doaj.org/api/search/articles/"
            + urllib.parse.quote(query) + "?pageSize=" + str(limit))
-    data = _get_json(url)
+    data = (
+        _get_json(url, traffic_context)
+        if traffic_context is not None
+        else _get_json(url)
+    )
     out = []
     for r in data.get("results", []):
         b = r.get("bibjson") or {}
@@ -251,7 +282,7 @@ def doaj(query, limit):
     return out
 
 
-def unpaywall_resolve(doi, email=None):
+def unpaywall_resolve(doi, email=None, traffic_context=None):
     """Unpaywall: given a DOI, find the legal open-access copy. Not a search
     engine - a resolver. This is what turns a paywalled result into a readable
     one. Requires a contact email (free, no key): set FINDER_CONTACT_EMAIL."""
@@ -260,7 +291,11 @@ def unpaywall_resolve(doi, email=None):
         return None
     url = ("https://api.unpaywall.org/v2/"
            + urllib.parse.quote(doi) + "?email=" + urllib.parse.quote(email))
-    data = _get_json(url)
+    data = (
+        _get_json(url, traffic_context, "research.resolve")
+        if traffic_context is not None
+        else _get_json(url)
+    )
     if not data.get("is_oa"):
         return None
     loc = data.get("best_oa_location") or {}
@@ -291,7 +326,7 @@ def _dedupe_key(rec):
     return "".join(ch for ch in title if ch.isalnum())[:80]
 
 
-def search(query, limit=8, sources=None):
+def search(query, limit=8, sources=None, traffic_context=None):
     """Search every registered source, merge, dedupe, and rank.
 
     Returns (results, notes) - notes records any source that failed, so the
@@ -305,7 +340,12 @@ def search(query, limit=8, sources=None):
         if not fn:
             continue
         try:
-            for rec in fn(query, limit):
+            records = (
+                fn(query, limit, traffic_context)
+                if traffic_context is not None
+                else fn(query, limit)
+            )
+            for rec in records:
                 if not rec.get("title"):
                     continue
                 key = _dedupe_key(rec)
@@ -325,7 +365,10 @@ def search(query, limit=8, sources=None):
         for r in results[:15]:
             if r.get("doi") and not r.get("oa_url"):
                 try:
-                    oa = unpaywall_resolve(r["doi"])
+                    oa = unpaywall_resolve(
+                        r["doi"],
+                        traffic_context=traffic_context,
+                    )
                     if oa:
                         r["oa_url"] = oa
                         r["is_oa"] = True
@@ -382,7 +425,7 @@ def grounding_system(results):
     )
 
 
-def explore(query, provider, limit=8):
+def explore(query, provider, limit=8, traffic_context=None):
     """Search real papers, then have an LLM answer *grounded in them*.
 
     The model is told to use only the retrieved sources and to cite them by
@@ -392,7 +435,11 @@ def explore(query, provider, limit=8):
     """
     import gateway
 
-    hits, notes = search(query, limit=limit)
+    hits, notes = search(
+        query,
+        limit=limit,
+        traffic_context=traffic_context,
+    )
     if not hits:
         return {"answer": None, "results": [], "notes": notes}
 
@@ -401,6 +448,7 @@ def explore(query, provider, limit=8):
         provider,
         messages=[{"role": "user", "content": query}],
         system=system,
+        traffic_context=traffic_context,
     )
     return {"answer": reply["text"], "results": hits, "notes": notes,
             "model": reply["model"], "provider": reply["provider"]}

@@ -13,6 +13,8 @@ import os
 import urllib.error
 import urllib.request
 
+import traffic
+
 ANTHROPIC_VERSION = "2023-06-01"
 TIMEOUT = 300
 
@@ -124,9 +126,17 @@ def available():
     return out
 
 
-def _post(url, payload, headers):
+def _post(url, payload, headers, traffic_context=None, provider=None):
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    if traffic_context is not None:
+        return traffic.provider_request(
+            traffic_context,
+            provider or "provider",
+            req,
+            timeout=TIMEOUT,
+            action_type="provider.chat",
+        )
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -137,7 +147,14 @@ def _post(url, payload, headers):
         raise GatewayError(f"could not reach provider: {e.reason}") from e
 
 
-def _anthropic(spec, model, system, messages, max_tokens):
+def _anthropic(
+    spec,
+    model,
+    system,
+    messages,
+    max_tokens,
+    traffic_context=None,
+):
     key = os.environ.get(spec["key_env"], "").strip()
     if not key:
         raise GatewayError("ANTHROPIC_API_KEY is not set in .env")
@@ -148,11 +165,17 @@ def _anthropic(spec, model, system, messages, max_tokens):
     }
     if system:
         payload["system"] = system
-    data = _post(spec["url"], payload, {
-        "content-type": "application/json",
-        "x-api-key": key,
-        "anthropic-version": ANTHROPIC_VERSION,
-    })
+    data = _post(
+        spec["url"],
+        payload,
+        {
+            "content-type": "application/json",
+            "x-api-key": key,
+            "anthropic-version": ANTHROPIC_VERSION,
+        },
+        traffic_context,
+        "anthropic",
+    )
     # content is a list of blocks; keep only the text ones
     text = "".join(b.get("text", "") for b in data.get("content", [])
                    if b.get("type") == "text")
@@ -172,7 +195,15 @@ def _anthropic(spec, model, system, messages, max_tokens):
     }
 
 
-def _openai_compatible(spec, model, system, messages, max_tokens):
+def _openai_compatible(
+    provider,
+    spec,
+    model,
+    system,
+    messages,
+    max_tokens,
+    traffic_context=None,
+):
     headers = {"content-type": "application/json"}
     if spec["key_env"]:
         key = os.environ.get(spec["key_env"], "").strip()
@@ -182,7 +213,13 @@ def _openai_compatible(spec, model, system, messages, max_tokens):
 
     full = ([{"role": "system", "content": system}] if system else []) + messages
     payload = {"model": model, "messages": full, "max_tokens": max_tokens}
-    data = _post(spec["url"], payload, headers)
+    data = _post(
+        spec["url"],
+        payload,
+        headers,
+        traffic_context,
+        provider,
+    )
 
     choices = data.get("choices") or []
     if not choices:
@@ -198,7 +235,14 @@ def _openai_compatible(spec, model, system, messages, max_tokens):
     }
 
 
-def chat(provider, messages, system=None, model=None, max_tokens=4096):
+def chat(
+    provider,
+    messages,
+    system=None,
+    model=None,
+    max_tokens=4096,
+    traffic_context=None,
+):
     """Send a conversation to any backend and get back plain text."""
     if provider not in PROVIDERS:
         raise GatewayError(f"unknown provider '{provider}'")
@@ -206,8 +250,23 @@ def chat(provider, messages, system=None, model=None, max_tokens=4096):
     model = model or model_for(provider)
 
     if spec["shape"] == "anthropic":
-        text, usage = _anthropic(spec, model, system, messages, max_tokens)
+        text, usage = _anthropic(
+            spec,
+            model,
+            system,
+            messages,
+            max_tokens,
+            traffic_context,
+        )
     else:
-        text, usage = _openai_compatible(spec, model, system, messages, max_tokens)
+        text, usage = _openai_compatible(
+            provider,
+            spec,
+            model,
+            system,
+            messages,
+            max_tokens,
+            traffic_context,
+        )
 
     return {"text": text, "provider": provider, "model": model, "usage": usage}

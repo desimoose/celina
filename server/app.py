@@ -9,7 +9,7 @@ Stdlib only. Serves the web UI and a small JSON API:
   GET  /api/workspace/file   read one artifact
   POST /api/workspace/save   write an artifact
 
-Run:  python server/app.py     then open http://localhost:8765
+Run:  python server/app.py     then open the exact loopback URL it prints
 """
 
 from dataclasses import replace

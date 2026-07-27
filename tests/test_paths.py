@@ -56,6 +56,23 @@ class PathsTest(unittest.TestCase):
             os.path.realpath(os.path.join(tmp, ".env")),
         )
 
+    def test_session_dir_is_created_under_sessions_root(self):
+        tmp = os.path.join(os.environ.get("TEMP", "/tmp"), "celina_test_home4")
+        os.environ["CELINA_HOME"] = tmp
+        session_id = "3a9d7472-8921-4c31-843f-ad74473b2bb9"
+        target = self.paths.session_dir(session_id)
+        self.assertTrue(os.path.isdir(target))
+        self.assertEqual(
+            os.path.dirname(os.path.realpath(target)),
+            os.path.realpath(self.paths.sessions_dir()),
+        )
+
+    def test_session_dir_rejects_unsafe_identifiers(self):
+        for value in ("../escape", r"..\escape", "a/b", "a\\b", "", "."):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    self.paths.session_dir(value)
+
 
 if __name__ == "__main__":
     unittest.main()

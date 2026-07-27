@@ -11,6 +11,7 @@ users).
 """
 
 import os
+import re
 import sys
 
 APP_NAME = "Celina"
@@ -53,6 +54,26 @@ def web_dir():
 
 def workspace_dir():
     d = os.path.join(data_dir(), "workspace")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def sessions_dir():
+    d = os.path.join(data_dir(), "sessions")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+_SAFE_COMPONENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
+
+
+def session_dir(session_id):
+    """Return one writable session directory without allowing traversal."""
+    if not isinstance(session_id, str) or not _SAFE_COMPONENT.fullmatch(
+        session_id
+    ):
+        raise ValueError("invalid session id")
+    d = os.path.join(sessions_dir(), session_id)
     os.makedirs(d, exist_ok=True)
     return d
 

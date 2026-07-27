@@ -3,7 +3,7 @@
 import secrets
 import hmac
 from http.cookies import SimpleCookie
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import urlsplit
 
 
 class LocalSecurity:
@@ -43,21 +43,13 @@ class LocalSecurity:
             isinstance(origin, str)
             and origin == self.expected_origin
             and isinstance(csrf_header, str)
-            and not self._query_contains_secret(query_string)
+            and not self._has_disallowed_query(query_string)
             and _secret_matches(supplied_cookie, self.launch_token)
             and _secret_matches(csrf_header, self.csrf_token)
         )
 
-    def _query_contains_secret(self, query_string):
-        if not isinstance(query_string, str):
-            return True
-        pairs = parse_qsl(query_string, keep_blank_values=True)
-        return any(
-            _secret_matches(part, token)
-            for pair in pairs
-            for part in pair
-            for token in (self.launch_token, self.csrf_token)
-        )
+    def _has_disallowed_query(self, query_string):
+        return not isinstance(query_string, str) or bool(query_string)
 
     @staticmethod
     def denial_body():

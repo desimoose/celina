@@ -70,11 +70,33 @@ class LocalSecurityTest(unittest.TestCase):
         security = local_security.LocalSecurity("http://127.0.0.1:8765")
         cookie = f"{security.cookie_name}={security.launch_token}"
 
-        for query_string in (
-            f"{security.csrf_token}=value",
-            security.launch_token,
+        for case, query_string in (
+            ("csrf-token-key", f"{security.csrf_token}=value"),
+            ("bare-launch-token", security.launch_token),
         ):
-            with self.subTest(query_string=query_string):
+            with self.subTest(case=case):
+                self.assertFalse(security.authorize_mutation(
+                    cookie,
+                    security.csrf_token,
+                    "http://127.0.0.1:8765",
+                    query_string=query_string,
+                ))
+
+    def test_rejects_every_nonempty_mutation_query_string(self):
+        security = local_security.LocalSecurity("http://127.0.0.1:8765")
+        cookie = f"{security.cookie_name}={security.launch_token}"
+        encoded_csrf = "".join(
+            f"%{ord(character):02X}"
+            for character in security.csrf_token
+        )
+
+        for case, query_string in (
+            ("ordinary-query", "page=2"),
+            ("embedded-csrf", f"q=prefix{security.csrf_token}"),
+            ("percent-encoded-embedded-csrf", f"q=prefix{encoded_csrf}"),
+            ("percent-encoded-csrf", f"q={encoded_csrf}"),
+        ):
+            with self.subTest(case=case):
                 self.assertFalse(security.authorize_mutation(
                     cookie,
                     security.csrf_token,

@@ -247,6 +247,11 @@ class SearchOrchestratorTest(unittest.TestCase):
         ]
         self.assertIn("citation.rejected", kinds)
         self.assertIn("answer.corrected", kinds)
+        self.assertIsNotNone(completed.verification)
+        self.assertEqual(
+            completed.verification.claims[0].status,
+            "rejected",
+        )
 
 
 if __name__ == "__main__":

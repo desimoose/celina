@@ -64,6 +64,12 @@ def sessions_dir():
     return d
 
 
+def memory_dir():
+    d = os.path.join(data_dir(), "memory")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 _SAFE_COMPONENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 
 

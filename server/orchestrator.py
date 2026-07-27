@@ -117,6 +117,7 @@ class SearchRun:
     candidates: list = field(default_factory=list)
     evidence: list = field(default_factory=list)
     answer: object = None
+    verification: object = None
     gaps: list = field(default_factory=list)
     conflicts: list = field(default_factory=list)
     follow_up_count: int = 0
@@ -309,6 +310,7 @@ class SearchOrchestrator:
                     run.answer,
                     tuple(run.evidence),
                 )
+                run.verification = verification
                 self._ensure_active(run)
                 for claim in verification.claims:
                     kind = (

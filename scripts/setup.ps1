@@ -18,32 +18,12 @@ Write-Host "  Celina optional tools" -ForegroundColor Cyan
 Write-Host "  The app already works without these."
 Write-Host ""
 
-# --- Obscura: stealth headless browser (prebuilt Windows binary) ---
-$obscuraDir = Join-Path $vendor "obscura"
-if (Test-Path (Join-Path $obscuraDir "obscura.exe")) {
+# --- Obscura: stealth headless browser (pinned release, hash-verified) ---
+if (Test-Path (Join-Path $vendor "obscura\obscura.exe")) {
     Write-Host "  Obscura: already installed" -ForegroundColor Green
 }
-elseif (Confirm-Step "  Download Obscura? (~43 MB, prebuilt x86_64 Windows binary from GitHub releases)") {
-    $api = "https://api.github.com/repos/h4ckf0r0day/obscura/releases/latest"
-    $release = Invoke-RestMethod -Uri $api -Headers @{ "User-Agent" = "celina" }
-    $asset = $release.assets | Where-Object { $_.name -like "*x86_64-windows*" } | Select-Object -First 1
-
-    if (-not $asset) { throw "no Windows asset in the latest release" }
-
-    $zip = Join-Path $env:TEMP $asset.name
-    Write-Host "  downloading $($asset.name) ..."
-    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing
-
-    New-Item -ItemType Directory -Force -Path $obscuraDir | Out-Null
-    Expand-Archive -Path $zip -DestinationPath $obscuraDir -Force
-    Remove-Item $zip -Force
-
-    # the archive may nest the exe one level down; flatten it
-    $exe = Get-ChildItem -Path $obscuraDir -Filter "obscura.exe" -Recurse | Select-Object -First 1
-    if ($exe -and $exe.DirectoryName -ne $obscuraDir) {
-        Move-Item $exe.FullName (Join-Path $obscuraDir "obscura.exe") -Force
-    }
-    Write-Host "  Obscura installed" -ForegroundColor Green
+elseif (Confirm-Step "  Download Obscura? (~43 MB, pinned release, verified against third_party/obscura/manifest.json)") {
+    & (Join-Path $PSScriptRoot "fetch-obscura.ps1")
 }
 
 # --- pypdf: clean PDF text extraction (the one Python dependency) ---

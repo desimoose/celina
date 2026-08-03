@@ -1,0 +1,28 @@
+{
+  "_comment": "Pinned Obscura release. Fetch/verify scripts read this file - never fetch 'latest' and never trust a hash from the same download as the artifact it checks. Bump deliberately: update version + re-derive every digest from `gh api repos/h4ckf0r0day/obscura/releases/tags/<tag>` before changing this file.",
+  "repo": "h4ckf0r0day/obscura",
+  "version": "v0.1.11",
+  "license": "Apache-2.0 (see LICENSE in this directory)",
+  "platforms": {
+    "windows-x86_64": {
+      "asset": "obscura-x86_64-windows-stealth.zip",
+      "sha256": "e42514179d3a478374dfaba4282b2414e07666a5e2d915c9c404beff0395f233"
+    },
+    "linux-x86_64": {
+      "asset": "obscura-x86_64-linux-stealth.tar.gz",
+      "sha256": "00c823861606ef802338c817ebc11885fe670817170fa32f5d154ab9f5b8882c"
+    },
+    "linux-aarch64": {
+      "asset": "obscura-aarch64-linux-stealth.tar.gz",
+      "sha256": "d535324d44724cdfec16e500d0335903bca5c6a446e736b351691ee7e39debb4"
+    },
+    "macos-x86_64": {
+      "asset": "obscura-x86_64-macos-stealth.tar.gz",
+      "sha256": "2b9df54fcccfb000fdcdee0945759c789ee5594a5ba3146044a51ea24062cbb3"
+    },
+    "macos-aarch64": {
+      "asset": "obscura-aarch64-macos-stealth.tar.gz",
+      "sha256": "c134618e186d5266e9a0ee00a02739b37db07da2451648432b05e163908b1c7a"
+    }
+  }
+}

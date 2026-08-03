@@ -65,17 +65,21 @@ Build the single-file exe:
 powershell -File build.ps1
 ```
 
-That produces `dist\Celina.exe`. It keeps your data in `Documents\Celina\`:
+This fetches the pinned Obscura release (verified against
+`third_party/obscura/manifest.json` — exact version and SHA-256, never
+"latest") and bundles it into the exe, so a fresh install is "add a key,
+search" with no separate download. `dist\Celina.exe` keeps the rest of your
+data in `Documents\Celina\`:
 
 ```
 Documents\Celina\
   .env         your API keys (seeded on first run)
   workspace\   saved research notes
-  vendor\      drop Obscura here (vendor\obscura\obscura.exe) for full-text reads
 ```
 
 Prerequisite on other machines: the Microsoft Edge WebView2 runtime (standard
-on Windows 11).
+on Windows 11). Obscura is bundled under its own Apache-2.0 license — see
+`third_party/obscura/`.
 
 ## Model backends
 
@@ -103,3 +107,12 @@ tied to any login or history.
 Stdlib Python on the server, plain HTML and JavaScript in the browser
 (self-hosted fonts). `pypdf` improves PDF extraction but is optional; `pywebview`
 is only needed for the desktop window. No build step for the web UI.
+
+## Contributing
+
+Issues and PRs welcome. `python -m unittest discover -s tests` runs the full
+suite (stdlib `unittest`, no test framework dependency) before you push.
+
+## License
+
+[MIT](LICENSE)

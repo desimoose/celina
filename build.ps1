@@ -1,6 +1,9 @@
 # Build Celina.exe (single-file, no console).
 $ErrorActionPreference = "Stop"
 
+Write-Host "Fetching Obscura (pinned, hash-verified) for bundling..."
+& (Join-Path $PSScriptRoot "scripts\fetch-obscura.ps1")
+
 Write-Host "Installing build + desktop deps..."
 python -m pip install -r requirements-desktop.txt
 python -m pip install pyinstaller

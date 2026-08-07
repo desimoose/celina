@@ -15,7 +15,6 @@ const state = {
   sessionId: null,      // local research session (created on first search)
   activeRunId: null,    // the bounded search run currently streaming
   eventSource: null,    // its live trace connection
-  voiceRecognition: null,
   mascot: { notices: [], unread: 0, panelOpen: false },
 };
 
@@ -803,55 +802,6 @@ function notifyWhenReady(title, body, kind = "active") {
   }
 }
 
-function toggleVoiceInput() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const button = $("mascot-voice");
-  if (!SpeechRecognition) {
-    setEngine("Voice input is not available here");
-    return;
-  }
-  if (state.voiceRecognition) {
-    state.voiceRecognition.stop();
-    return;
-  }
-  const recognition = new SpeechRecognition();
-  state.voiceRecognition = recognition;
-  recognition.lang = navigator.language || "en-US";
-  recognition.interimResults = false;
-  recognition.maxAlternatives = 1;
-  recognition.onstart = () => {
-    button.classList.add("is-listening");
-    button.setAttribute("aria-pressed", "true");
-    button.setAttribute("aria-label", "Stop voice input");
-    setEngine("Listening…");
-  };
-  recognition.onresult = (event) => {
-    const transcript = event.results[0][0].transcript.trim();
-    if (transcript) {
-      $("url").value = transcript;
-      $("url").focus();
-      setEngine("Voice input ready");
-    }
-  };
-  recognition.onerror = (event) => {
-    setEngine(event.error === "not-allowed" ? "Microphone permission denied" : "Voice input failed");
-  };
-  recognition.onend = () => {
-    state.voiceRecognition = null;
-    button.classList.remove("is-listening");
-    button.removeAttribute("aria-pressed");
-    button.setAttribute("aria-label", "Use voice input");
-  };
-  try {
-    recognition.start();
-  } catch {
-    state.voiceRecognition = null;
-    button.classList.remove("is-listening");
-    button.removeAttribute("aria-pressed");
-    setEngine("Voice input could not start");
-  }
-}
-
 // ---------- wiring ----------
 
 $("find").onclick = findPapers;
@@ -867,7 +817,6 @@ $("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrl
 $("mascot-notify").onclick = openMascotPanel;
 $("mascot-panel-close").onclick = closeMascotPanel;
 $("mascot-enable-notify").onclick = enableNotifications;
-$("mascot-voice").onclick = toggleVoiceInput;
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.mascot.panelOpen) closeMascotPanel(); });
 document.addEventListener("click", (e) => {
   if (state.mascot.panelOpen && !$("mascot").contains(e.target)) closeMascotPanel();

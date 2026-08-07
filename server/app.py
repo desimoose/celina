@@ -35,8 +35,10 @@ import finder  # noqa: E402
 import events  # noqa: E402
 import gateway  # noqa: E402
 import local_security  # noqa: E402
+import notebooks  # noqa: E402
 import orchestrator  # noqa: E402
 import paths  # noqa: E402
+import projects  # noqa: E402
 import scanner  # noqa: E402
 import search_runtime  # noqa: E402
 import serialization  # noqa: E402
@@ -54,6 +56,8 @@ SYSTEM_PROMPT = (
     "Cite what you were given; say plainly when you do not know something "
     "rather than guessing. Be concise and lead with the finding."
 )
+
+_DEFAULT_SESSION_RETENTION_SECONDS = 24 * 60 * 60
 
 
 _ENV_TEMPLATE = """\
@@ -86,6 +90,8 @@ FINDER_CONTACT_EMAIL=
 
 # --- app ---
 CELINA_PORT=8765
+# Completed sessions are automatically removed after this many seconds.
+CELINA_SESSION_RETENTION_SECONDS=86400
 """
 
 
@@ -109,6 +115,17 @@ def load_env():
                 continue
             key, _, value = line.partition("=")
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def session_retention_seconds():
+    raw = os.environ.get(
+        "CELINA_SESSION_RETENTION_SECONDS",
+        str(_DEFAULT_SESSION_RETENTION_SECONDS),
+    )
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return _DEFAULT_SESSION_RETENTION_SECONDS
 
 
 def update_env(updates):
@@ -392,6 +409,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._post_session_route(parsed)
         if route == "/api/search-runs" or route.startswith("/api/search-runs/"):
             return self._post_search_run_route(parsed)
+        if route == "/api/notebooks" or route.startswith("/api/notebooks/"):
+            if not self._allows_session_mutation(parsed.query):
+                self._discard_request_body()
+                return self._forbidden()
+            try:
+                payload = self._read_json()
+            except Exception:
+                return self._send(400, {"error": "invalid JSON body"})
+            return self._post_notebook_route(parsed, payload)
         try:
             payload = self._read_json()
         except Exception:
@@ -403,8 +429,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._explore(payload)
         if route == "/api/fetch":
             return self._fetch(payload)
+        if route == "/api/notebooks" or route.startswith("/api/notebooks/"):
+            return self._post_notebook_route(parsed, payload)
         if route == "/api/workspace/save":
             return self._save(payload)
+        if route == "/api/projects":
+            return self._create_project(payload, parsed.query)
+        if route.startswith("/api/projects/"):
+            return self._save_project_output(parsed, payload)
         if route == "/api/settings":
             return self._save_settings(payload)
         return self._send(404, {"error": "no such endpoint"})
@@ -499,7 +531,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {
                     "error": "content_recording must be a boolean"
                 })
-            session = self.server.session_store.create(content_recording)
+            incognito = payload.get("incognito", False)
+            if not isinstance(incognito, bool):
+                return self._send(400, {"error": "incognito must be a boolean"})
+            session = self.server.session_store.create(
+                content_recording, incognito=incognito
+            )
             return self._send(201, self._serialized_session(session))
 
         prefix = "/api/sessions/"
@@ -514,6 +551,14 @@ class Handler(BaseHTTPRequestHandler):
         except (OSError, ValueError, KeyError):
             return self._not_found()
         self.server.recovery_required_session_ids.discard(session_id)
+        if session.incognito:
+            result = self.server.session_store.delete(session_id)
+            if not result.deleted:
+                return self._send(500, {"error": "could not delete incognito session"})
+            return self._send(200, {
+                **self._serialized_session(session),
+                "deleted": True,
+            })
         return self._send(200, self._serialized_session(session))
 
     def _get_search_run_route(self, route):
@@ -536,8 +581,23 @@ class Handler(BaseHTTPRequestHandler):
         return self._not_found()
 
     def _get_notebook_route(self, route):
+        if not self._has_launch_cookie():
+            return self._forbidden()
         if route == "/api/notebooks":
-            return self._send(200, {"notebooks": notebooks.list_notebooks()})
+            items = notebooks.list_notebooks()
+            summaries = []
+            for notebook in items:
+                summaries.append({
+                    "id": notebook["id"],
+                    "title": notebook["title"],
+                    "goal": notebook["goal"],
+                    "created_at": notebook["created_at"],
+                    "updated_at": notebook["updated_at"],
+                    "source_count": len(notebook["sources"]),
+                    "note_count": len(notebook["notes"]),
+                    "learning_path_depth": notebook.get("learning_path", {}).get("depth", "college"),
+                })
+            return self._send(200, {"notebooks": summaries})
 
         prefix = "/api/notebooks/"
         notebook_id = route[len(prefix):]
@@ -581,6 +641,100 @@ class Handler(BaseHTTPRequestHandler):
         except KeyError:
             return self._not_found()
         return self._send(200, serialization.serialize_search_run(run))
+
+    def _post_notebook_route(self, parsed, payload):
+        route = parsed.path
+        if not self._allows_session_mutation(parsed.query):
+            return self._forbidden()
+        if route == "/api/notebooks":
+            try:
+                payload = self._require_object(payload, "invalid notebook request")
+                title = self._notebook_request_value(
+                    payload, "title", limit=notebooks._TITLE_LIMIT
+                )
+                goal = self._notebook_request_value(
+                    payload,
+                    "goal",
+                    limit=notebooks._NOTE_BODY_LIMIT,
+                    required=False,
+                )
+                notebook = notebooks.create_notebook(title, goal)
+            except ValueError as e:
+                return self._send(400, {"error": str(e)})
+            except OSError as e:
+                return self._send(500, {"error": str(e)})
+            return self._send(201, {"notebook": notebook})
+
+        prefix = "/api/notebooks/"
+        suffix = route[len(prefix):]
+        if not suffix:
+            return self._not_found()
+        parts = suffix.split("/")
+        if len(parts) != 2 or not parts[1]:
+            return self._not_found()
+        try:
+            notebook_id = self._safe_notebook_id(parts[0])
+            payload = self._require_object(payload, "invalid notebook request")
+            if parts[1] == "sources":
+                source = self._create_notebook_source(notebook_id, payload)
+                return self._send(201, {"source": source})
+            if parts[1] == "notes":
+                note = self._create_notebook_note(notebook_id, payload)
+                return self._send(201, {"note": note})
+            if parts[1] == "learning-path":
+                learning_path = self._generate_learning_path(notebook_id, payload)
+                return self._send(200, {"learning_path": learning_path})
+        except ValueError as e:
+            return self._send(400, {"error": str(e)})
+        except OSError as e:
+            return self._send(500, {"error": str(e)})
+        return self._not_found()
+
+    def _create_notebook_source(self, notebook_id, payload):
+        request = {
+            "title": self._notebook_request_value(
+                payload, "title", limit=notebooks._SOURCE_TITLE_LIMIT
+            ),
+            "url": self._notebook_request_value(
+                payload, "url", limit=notebooks._URL_LIMIT, required=False
+            ),
+            "kind": self._notebook_request_value(
+                payload, "kind", limit=64, required=False
+            ),
+            "excerpt": self._notebook_request_value(
+                payload, "excerpt", limit=notebooks._EXCERPT_LIMIT
+            ),
+        }
+        return notebooks.add_source(notebook_id, request)
+
+    def _create_notebook_note(self, notebook_id, payload):
+        source_ids = payload.get("source_ids")
+        if source_ids is None:
+            source_ids = []
+        if not isinstance(source_ids, list):
+            raise ValueError("source_ids must be a list")
+        request = {
+            "title": self._notebook_request_value(
+                payload, "title", limit=notebooks._NOTE_TITLE_LIMIT
+            ),
+            "body": self._notebook_request_value(
+                payload, "body", limit=notebooks._NOTE_BODY_LIMIT
+            ),
+            "source_ids": source_ids,
+        }
+        return notebooks.add_note(notebook_id, request)
+
+    def _generate_learning_path(self, notebook_id, payload):
+        depth = payload.get("depth")
+        if not isinstance(depth, str) or depth not in {"survey", "college", "graduate"}:
+            raise ValueError("depth must be one of: survey, college, graduate")
+        request = {
+            "goal": self._notebook_request_value(
+                payload, "goal", limit=notebooks._NOTE_BODY_LIMIT, required=False
+            ),
+            "depth": depth,
+        }
+        return notebooks.generate_learning_path(notebook_id, request)
 
     def _start_search_run(self, payload):
         if not isinstance(payload, dict):
@@ -859,6 +1013,7 @@ def make_server(port=None, host="127.0.0.1", session_root=None):
     server = Server((host, port), Handler)
     bound_host, bound_port = server.server_address[:2]
     store = sessions.SessionStore(session_root)
+    store.cleanup(session_retention_seconds())
     server.session_store = store
     server.event_bus = events.EventBus(store)
     server.search_runtime = search_runtime.SearchRuntime(

@@ -63,6 +63,13 @@ def workspace_dir():
     return d
 
 
+def projects_dir():
+    """Writable project/output folders kept beside the research workspace."""
+    d = os.path.join(data_dir(), "projects")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def sessions_dir():
     d = os.path.join(data_dir(), "sessions")
     os.makedirs(d, exist_ok=True)

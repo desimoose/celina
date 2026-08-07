@@ -168,11 +168,13 @@ class SearchApiTest(unittest.TestCase):
             "Origin": origin or self.base_url,
         }
 
-    def _create_session(self, content_recording=None):
+    def _create_session(self, content_recording=None, incognito=None):
         cookie, csrf = self._launch()
         payload = {}
         if content_recording is not None:
             payload["content_recording"] = content_recording
+        if incognito is not None:
+            payload["incognito"] = incognito
         status, _headers, body = self._request(
             "POST",
             "/api/sessions",
@@ -404,11 +406,13 @@ class SearchApiTest(unittest.TestCase):
             "created_at",
             "last_active_at",
             "content_recording",
+            "incognito",
             "recovery_required",
         }
         self.assertEqual(set(created), expected_keys)
         self.assertEqual(created["state"], "active")
         self.assertTrue(created["content_recording"])
+        self.assertFalse(created["incognito"])
         self.assertFalse(created["recovery_required"])
 
         status, _headers, body = self._request(
@@ -442,6 +446,44 @@ class SearchApiTest(unittest.TestCase):
         )
         self.assertEqual(status, 201)
         self.assertFalse(json.loads(body)["content_recording"])
+
+    def test_incognito_session_is_deleted_when_ended(self):
+        created, cookie, csrf = self._create_session(incognito=True)
+        self.assertTrue(created["incognito"])
+        session_dir = os.path.join(self.session_root, created["session_id"])
+        self.assertTrue(os.path.isdir(session_dir))
+
+        status, _headers, body = self._request(
+            "POST",
+            "/api/sessions/%s/end" % created["session_id"],
+            {},
+            self._mutation_headers(cookie, csrf),
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["deleted"])
+        self.assertFalse(os.path.exists(session_dir))
+
+    def test_expired_stopped_sessions_are_deleted_on_server_start(self):
+        created, cookie, csrf = self._create_session()
+        status, _headers, _body = self._request(
+            "POST",
+            "/api/sessions/%s/end" % created["session_id"],
+            {},
+            self._mutation_headers(cookie, csrf),
+        )
+        self.assertEqual(status, 200)
+
+        self._stop_server()
+        with mock.patch.dict(os.environ, {"CELINA_SESSION_RETENTION_SECONDS": "0"}):
+            self._start_server()
+            cookie, _csrf = self._launch()
+            status, _headers, body = self._request(
+                "GET", "/api/sessions", headers={"Cookie": cookie}
+            )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["sessions"], [])
 
     def test_recovery_required_session_is_visible_after_restart(self):
         created, _cookie, _csrf = self._create_session()

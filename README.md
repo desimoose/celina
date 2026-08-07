@@ -75,6 +75,7 @@ data in `Documents\Celina\`:
 Documents\Celina\
   .env         your API keys (seeded on first run)
   workspace\   saved research notes
+  projects\    local project folders and formatted outputs
 ```
 
 Prerequisite on other machines: the Microsoft Edge WebView2 runtime (standard
@@ -97,10 +98,29 @@ Settings.
 ## Privacy
 
 Keys live in `.env`, read into the server process, and go only to the provider
-you pick. Notes stay on disk in `workspace/`. With Ollama selected nothing
+you pick. Notes stay on disk in `workspace/`, and Library projects keep their
+Markdown, plain-text, HTML, or JSON outputs in `projects/`. With Ollama selected nothing
 leaves the machine at all. Discovery and reading run through Obscura's stealth
 fetch: a consistent fingerprint and a fresh, cookieless jar, so a visit isn't
 tied to any login or history.
+
+Search sessions automatically expire after 24 hours by default. Set
+`CELINA_SESSION_RETENTION_SECONDS` in `.env` to change that retention window.
+Enable Incognito before searching to create an ephemeral session: it is deleted
+when ended, when the page closes, or when the server restarts.
+
+## Notebook
+
+Notebook is the source-grounded learning desk for adult and college-level
+self-study. Create a notebook around a question, add the papers, books,
+lectures, or excerpts you trust, keep evidence-linked notes, and generate a
+survey, college, or graduate-depth path through the material. The tutor uses
+the active notebook's bounded sources, notes, and path as its context rather
+than answering from an unbounded conversation.
+
+Notebook data is local JSON under `workspace/notebooks/`. It is intentionally
+separate from Library projects: notebooks are living study spaces, while
+Library outputs are finished artifacts you choose to keep.
 
 ## It runs with few dependencies
 

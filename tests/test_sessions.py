@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -48,6 +49,38 @@ class SessionStoreTest(unittest.TestCase):
         self.assertEqual(reopened.session_id, created.session_id)
         self.assertEqual(reopened.created_at, created.created_at)
         self.assertEqual(reopened.state, "active")
+
+    def test_incognito_session_is_marked_and_reopened(self):
+        created = self.store.create(incognito=True)
+        self.assertTrue(created.incognito)
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.temp.name, created.session_id, ".incognito")
+        ))
+        reopened = sessions.SessionStore(self.temp.name).get(created.session_id)
+        self.assertTrue(reopened.incognito)
+
+    def test_cleanup_deletes_expired_and_incognito_sessions(self):
+        old = self.store.create()
+        self.store.mark_stopped(old.session_id)
+        connection = sqlite3.connect(os.path.join(self.temp.name, old.session_id, "ledger.sqlite3"))
+        try:
+            connection.execute(
+                "UPDATE session SET last_active_at = ?",
+                ("2020-01-01T00:00:00.000Z",),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        recent = self.store.create()
+        self.store.mark_stopped(recent.session_id)
+        incognito = self.store.create(incognito=True)
+
+        removed = self.store.cleanup(retention_seconds=3600)
+
+        self.assertEqual(set(removed), {old.session_id, incognito.session_id})
+        self.assertIsNone(self.store.get(old.session_id))
+        self.assertIsNotNone(self.store.get(recent.session_id))
+        self.assertIsNone(self.store.get(incognito.session_id))
 
     def test_active_session_is_recoverable_after_restart(self):
         created = self.store.create()

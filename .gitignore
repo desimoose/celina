@@ -9,6 +9,10 @@ vendor/*
 workspace/*
 !workspace/.gitkeep
 
+# local project folders and formatted outputs are personal by default
+projects/*
+!projects/.gitkeep
+
 # local session ledgers (queries, evidence, redacted traffic) are personal
 sessions/*
 !sessions/.gitkeep

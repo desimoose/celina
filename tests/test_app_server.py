@@ -1,8 +1,11 @@
 import json
 import os
+import re
 import sys
+import tempfile
 import threading
 import unittest
+import urllib.error
 import urllib.request
 from unittest import mock
 
@@ -81,6 +84,247 @@ class SeedEnvTest(unittest.TestCase):
             second = fh.read()
         self.assertIn("USER_EDIT=1", second)
         os.remove(tmp)
+
+
+class NotebookApiTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.celina_home = self.temp.name
+        self.env_patch = mock.patch.dict(os.environ, {"CELINA_HOME": self.celina_home})
+        self.env_patch.start()
+        self.srv = app.make_server(
+            port=0, session_root=os.path.join(self.celina_home, "sessions")
+        )
+        self.base_url = f"http://127.0.0.1:{self.srv.server_address[1]}"
+        self.thread = threading.Thread(target=self.srv.serve_forever, daemon=True)
+        self.thread.start()
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+        self.thread.join()
+        self.env_patch.stop()
+        self.temp.cleanup()
+
+    def _request(self, method, path, body=None, headers=None, raw_body=None):
+        payload = raw_body
+        if raw_body is None and body is not None:
+            payload = json.dumps(body).encode("utf-8")
+        request = urllib.request.Request(
+            self.base_url + path,
+            data=payload,
+            headers=headers or {},
+            method=method,
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return (
+                    response.status,
+                    response.headers,
+                    response.read().decode("utf-8"),
+                )
+        except urllib.error.HTTPError as error:
+            body = error.read().decode("utf-8")
+            headers = error.headers
+            status = error.code
+            error.close()
+            return status, headers, body
+
+    def _launch(self):
+        status, headers, body = self._request("GET", "/")
+        self.assertEqual(status, 200)
+        cookie = headers.get("Set-Cookie").split(";", 1)[0]
+        csrf = re.search(
+            r'<meta name="celina-csrf" content="([^"]+)">', body
+        ).group(1)
+        return cookie, csrf
+
+    def _mutation_headers(self, cookie, csrf):
+        return {
+            "Content-Type": "application/json",
+            "Cookie": cookie,
+            "X-Celina-CSRF": csrf,
+            "Origin": self.base_url,
+        }
+
+    def _create_notebook(self, title="Sleep research", goal="Understand REM"):
+        cookie, csrf = self._launch()
+        status, _headers, body = self._request(
+            "POST",
+            "/api/notebooks",
+            {"title": title, "goal": goal},
+            self._mutation_headers(cookie, csrf),
+        )
+        self.assertEqual(status, 201)
+        return json.loads(body), cookie, csrf
+
+    def _notebooks_dir(self):
+        return os.path.join(self.celina_home, "workspace", "notebooks")
+
+    def test_notebook_routes_support_list_create_read_and_nested_mutations(self):
+        list_cookie, _list_csrf = self._launch()
+        listed, _headers, body = self._request(
+            "GET", "/api/notebooks", headers={"Cookie": list_cookie}
+        )
+        self.assertEqual(listed, 200)
+        self.assertEqual(json.loads(body), {"notebooks": []})
+
+        created, cookie, csrf = self._create_notebook()
+        self.assertEqual(created["notebook"]["id"], "sleep-research")
+        self.assertEqual(created["notebook"]["goal"], "Understand REM")
+
+        listed, _headers, body = self._request(
+            "GET", "/api/notebooks", headers={"Cookie": cookie}
+        )
+        self.assertEqual(listed, 200)
+        self.assertEqual(len(json.loads(body)["notebooks"]), 1)
+        self.assertNotIn("sources", json.loads(body)["notebooks"][0])
+        self.assertNotIn("notes", json.loads(body)["notebooks"][0])
+
+        read, _headers, body = self._request(
+            "GET", "/api/notebooks/sleep-research", headers={"Cookie": cookie}
+        )
+        self.assertEqual(read, 200)
+        self.assertEqual(json.loads(body)["notebook"]["title"], "Sleep research")
+
+        source_status, _headers, body = self._request(
+            "POST",
+            "/api/notebooks/sleep-research/sources",
+            {
+                "title": "Journal article",
+                "url": "https://example.test/study",
+                "kind": "research",
+                "excerpt": "Evening caffeine delayed sleep onset.",
+            },
+            self._mutation_headers(cookie, csrf),
+        )
+        self.assertEqual(source_status, 201)
+        source = json.loads(body)["source"]
+        self.assertEqual(source["id"], "source-1")
+
+        note_status, _headers, body = self._request(
+            "POST",
+            "/api/notebooks/sleep-research/notes",
+            {
+                "title": "Key takeaway",
+                "body": "Caffeine likely matters most later in the day.",
+                "source_ids": ["source-1"],
+            },
+            self._mutation_headers(cookie, csrf),
+        )
+        self.assertEqual(note_status, 201)
+        note = json.loads(body)["note"]
+        self.assertEqual(note["source_ids"], ["source-1"])
+
+        path_status, _headers, body = self._request(
+            "POST",
+            "/api/notebooks/sleep-research/learning-path",
+            {"goal": "Improve sleep habits", "depth": "graduate"},
+            self._mutation_headers(cookie, csrf),
+        )
+        self.assertEqual(path_status, 200)
+        learning_path = json.loads(body)["learning_path"]
+        self.assertEqual(learning_path["goal"], "Improve sleep habits")
+        self.assertEqual(learning_path["depth"], "graduate")
+        self.assertIn("sections", learning_path)
+
+        read, _headers, body = self._request(
+            "GET", "/api/notebooks/sleep-research", headers={"Cookie": cookie}
+        )
+        self.assertEqual(read, 200)
+        notebook = json.loads(body)["notebook"]
+        self.assertEqual(len(notebook["sources"]), 1)
+        self.assertEqual(notebook["notes"][0]["id"], "note-1")
+        self.assertEqual(notebook["learning_path"]["goal"], "Improve sleep habits")
+        self.assertEqual(notebook["learning_path"]["depth"], "graduate")
+
+    def test_notebook_reads_require_launch_cookie(self):
+        status, _headers, _body = self._request("GET", "/api/notebooks")
+        self.assertEqual(status, 403)
+
+        created, cookie, _csrf = self._create_notebook()
+        status, _headers, _body = self._request(
+            "GET", f"/api/notebooks/{created['notebook']['id']}"
+        )
+        self.assertEqual(status, 403)
+        status, _headers, _body = self._request(
+            "GET", f"/api/notebooks/{created['notebook']['id']}",
+            headers={"Cookie": cookie},
+        )
+        self.assertEqual(status, 200)
+
+    def test_unauthorized_notebook_body_is_discarded_before_json_parsing(self):
+        status, _headers, body = self._request(
+            "POST", "/api/notebooks", raw_body=b"not-json",
+        )
+        self.assertEqual(status, 403)
+        self.assertNotIn("invalid JSON", body)
+
+    def test_notebook_writes_require_existing_mutation_guard(self):
+        created, _cookie, _csrf = self._create_notebook()
+        notebook_id = created["notebook"]["id"]
+        attempts = (
+            ("POST", "/api/notebooks", {"title": "Blocked", "goal": ""}),
+            (
+                "POST",
+                f"/api/notebooks/{notebook_id}/sources",
+                {"title": "T", "url": "", "kind": "", "excerpt": "E"},
+            ),
+            (
+                "POST",
+                f"/api/notebooks/{notebook_id}/notes",
+                {"title": "T", "body": "B", "source_ids": []},
+            ),
+            (
+                "POST",
+                f"/api/notebooks/{notebook_id}/learning-path",
+                {"goal": "Learn", "depth": "survey"},
+            ),
+        )
+
+        for method, path, payload in attempts:
+            with self.subTest(path=path):
+                status, _headers, body = self._request(method, path, payload, {})
+                self.assertEqual(status, 403)
+                self.assertEqual(json.loads(body), {"error": "forbidden"})
+
+    def test_notebook_invalid_ids_and_malformed_bodies_return_400_without_writes(self):
+        cookie, csrf = self._launch()
+
+        status, _headers, body = self._request(
+            "POST",
+            "/api/notebooks",
+            headers=self._mutation_headers(cookie, csrf),
+            raw_body=b"{bad json",
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body), {"error": "invalid JSON body"})
+        self.assertFalse(os.path.exists(self._notebooks_dir()))
+
+        status, _headers, body = self._request(
+            "GET", "/api/notebooks/%2e%2e", headers={"Cookie": cookie}
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body), {"error": "invalid notebook id"})
+        self.assertFalse(os.path.exists(self._notebooks_dir()))
+
+        created, cookie, csrf = self._create_notebook(title="Valid notebook")
+        notebook_file = os.path.join(
+            self._notebooks_dir(), f"{created['notebook']['id']}.json"
+        )
+        with open(notebook_file, "r", encoding="utf-8") as fh:
+            before = fh.read()
+
+        status, _headers, body = self._request(
+            "POST",
+            f"/api/notebooks/{created['notebook']['id']}/notes",
+            {"title": "Broken note", "body": "", "source_ids": []},
+            self._mutation_headers(cookie, csrf),
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body), {"error": "body is required"})
+        with open(notebook_file, "r", encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), before)
 
 
 if __name__ == "__main__":

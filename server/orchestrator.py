@@ -224,7 +224,10 @@ class SearchOrchestrator:
                 "plan.completed",
                 "planning",
                 query_count=len(run.query_plan.queries),
-                details={"angles": list(run.query_plan.angles)},
+                details={
+                    "queries": list(run.query_plan.queries),
+                    "angles": list(run.query_plan.angles),
+                },
             )
 
             queries = list(run.query_plan.queries)
@@ -422,7 +425,7 @@ class SearchOrchestrator:
                 "query.started",
                 "retrieving",
                 query=query,
-                details={"query_id": query_id},
+                details={"query_id": query_id, "query": query},
             )
             try:
                 found = self.retriever(
@@ -444,7 +447,7 @@ class SearchOrchestrator:
                     "retrieving",
                     query=query,
                     candidate_count=len(normalized),
-                    details={"query_id": query_id},
+                    details={"query_id": query_id, "query": query},
                 )
             except _StoppedRun:
                 raise
@@ -457,6 +460,7 @@ class SearchOrchestrator:
                     severity="warning",
                     details={
                         "query_id": query_id,
+                        "query": query,
                         "error_class": type(error).__name__,
                     },
                 )

@@ -9,6 +9,7 @@ def serialize_session(session):
         "created_at": session.created_at,
         "last_active_at": session.last_active_at,
         "content_recording": session.content_recording,
+        "incognito": getattr(session, "incognito", False),
         "recovery_required": session.recovery_required,
     }
 

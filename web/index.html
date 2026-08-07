@@ -15,22 +15,31 @@
     <div class="brand"><img src="/celina.svg" alt="Celina" /></div>
 
     <div class="nav">
-      <button class="navbtn is-active" data-view="work" aria-label="Search and read">
+      <button class="navbtn is-active" data-view="work" aria-label="Search and read" data-tooltip="Search and read">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <span>Search</span>
       </button>
-      <button class="navbtn" data-view="library" aria-label="Library">
+      <button class="navbtn" data-view="library" aria-label="Library" data-tooltip="Open saved research">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M3 13l9 5 9-5"/></svg>
         <span>Library</span>
+      </button>
+      <button class="navbtn" data-view="notebook" aria-label="Notebook" data-tooltip="Study from your sources">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5h11a3 3 0 0 1 3 3v12H8a3 3 0 0 1-3-3v-12Z"/><path d="M8 4.5v15M11 9h5M11 13h5"/></svg>
+        <span>Notebook</span>
       </button>
     </div>
 
     <div class="rail-foot">
       <a class="update-link" id="update-link" href="#" target="_blank" rel="noopener" hidden
-         aria-label="A newer version of Celina is available - opens the download page">
+         aria-label="A newer version of Celina is available - opens the download page"
+         data-tooltip="See what's new">
         <span class="update-dot" aria-hidden="true"></span>Update
       </a>
-      <button class="gear" id="settings-open" aria-label="Settings">
+      <button class="rail-action" id="guide-open" aria-label="Open the Celina guide" data-tooltip="Take a short tour">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.8 9a2.3 2.3 0 1 1 3.7 1.8c-.9.7-1.5 1-1.5 2.2M12 16.5h.01"/></svg>
+        <span>Guide</span>
+      </button>
+      <button class="rail-action" id="settings-open" aria-label="Settings" data-tooltip="Connect providers and tools">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
         <span>Settings</span>
       </button>
@@ -69,17 +78,28 @@
       <div class="toolbar">
         <div class="field">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input id="url" type="text" spellcheck="false"
+          <input id="url" type="text" spellcheck="false" title="Ask a question or paste a link"
                  aria-label="Ask anything, or paste a link to read"
                  placeholder="Ask anything, or paste a link to read" />
         </div>
-        <button id="find" class="btn btn--primary">Search</button>
-        <button id="stop" class="btn btn--ghost" hidden>Stop</button>
-        <button id="go" class="btn btn--ghost">Read a link</button>
-        <button id="save" class="btn btn--primary" disabled>Keep this</button>
+        <button id="find" class="btn btn--primary" data-tooltip="Search across real sources">Search</button>
+        <button id="stop" class="btn btn--ghost" hidden data-tooltip="Stop this search">Stop</button>
+        <button id="go" class="btn btn--ghost" data-tooltip="Read a page without signing in">Read a link</button>
+        <button id="save" class="btn btn--primary" disabled data-tooltip="Save this answer to your Library">Keep this</button>
+        <label class="privacy-toggle" title="Delete this search session when it ends">
+          <input id="incognito-toggle" type="checkbox" />
+          <span>Incognito</span>
+        </label>
         <div class="status" id="engine"></div>
         <div id="engine-announce" class="sr-only" aria-live="polite" aria-atomic="true"></div>
       </div>
+      <section class="research-loop" id="research-loop" hidden aria-label="First-pass questions">
+        <div class="research-loop-head">
+          <span>First pass</span>
+          <span id="research-loop-count">Preparing focused questions</span>
+        </div>
+        <ol id="research-loop-questions" class="research-loop-questions"></ol>
+      </section>
       <div class="view" id="view">
         <div class="empty">
           <h1>Ask anything.<br>Know <span class="accent">something</span>.</h1>
@@ -88,7 +108,101 @@
           <div class="example">
             <button class="example-chip" id="example-q">Try: does caffeine affect sleep?</button>
           </div>
+          <div class="quick-start" aria-label="Quick start guide">
+            <div class="quick-start-head">
+              <span>How Celina works</span>
+              <button class="quick-start-link" id="guide-open-inline" type="button">Show me around</button>
+            </div>
+            <div class="quick-start-steps">
+              <div><strong>Ask</strong><span>Start with a question or link.</span></div>
+              <div><strong>Inspect</strong><span>Read the sources behind the answer.</span></div>
+              <div><strong>Keep</strong><span>Save useful work to your Library.</span></div>
+            </div>
+          </div>
         </div>
+      </div>
+    </section>
+
+    <!-- Notebook: source-grounded learning workspace -->
+    <section class="surface" id="s-notebook" aria-label="Notebook" hidden>
+      <div class="notebook-toolbar">
+        <div class="notebook-heading">
+          <span class="eyebrow">Study desk</span>
+          <h2 id="notebook-title">Choose a notebook</h2>
+          <p id="notebook-goal" class="notebook-goal">Bring a question, a paper, or a subject you want to understand.</p>
+        </div>
+        <div class="notebook-actions">
+          <label class="notebook-select-label">
+            <span>Notebook</span>
+            <select id="notebook-select" aria-label="Choose a notebook"></select>
+          </label>
+          <button id="notebook-new" class="btn btn--primary" type="button">New notebook</button>
+        </div>
+      </div>
+
+      <div class="notebook-create" id="notebook-create" hidden>
+        <div>
+          <span class="eyebrow">Start a line of inquiry</span>
+          <h3>What are you trying to understand?</h3>
+        </div>
+        <div class="notebook-create-fields">
+          <label><span>Notebook title</span><input id="notebook-name" maxlength="120" placeholder="e.g. The science of sleep" /></label>
+          <label><span>Learning goal</span><input id="notebook-goal-input" maxlength="10000" placeholder="e.g. Reach graduate-level fluency in the core ideas" /></label>
+        </div>
+        <div class="notebook-create-actions">
+          <button id="notebook-create-cancel" class="btn btn--ghost" type="button">Cancel</button>
+          <button id="notebook-create-save" class="btn btn--primary" type="button">Create notebook</button>
+        </div>
+      </div>
+
+      <div class="notebook-layout">
+        <aside class="notebook-sources" aria-label="Notebook sources">
+          <div class="notebook-panel-head"><span class="eyebrow">Sources</span><span id="notebook-source-count" class="mono">0</span></div>
+          <div id="notebook-source-list" class="notebook-source-list"></div>
+          <p id="notebook-sources-empty" class="notebook-empty">Add a paper, webpage, or excerpt to give the tutor something solid to work from.</p>
+          <form id="notebook-source-form" class="notebook-form" hidden>
+            <label><span>Title</span><input id="source-title" maxlength="160" placeholder="Source title" required /></label>
+            <label><span>URL <em>optional</em></span><input id="source-url" maxlength="2048" type="url" placeholder="https://…" /></label>
+            <label><span>Excerpt or abstract</span><textarea id="source-excerpt" maxlength="5000" rows="5" placeholder="Paste the passage you want to keep in view…" required></textarea></label>
+            <label><span>Kind <em>optional</em></span><input id="source-kind" maxlength="64" placeholder="paper, book, lecture…" /></label>
+            <div class="notebook-form-actions"><button id="source-cancel" class="btn btn--ghost" type="button">Cancel</button><button class="btn btn--primary" type="submit">Add source</button></div>
+          </form>
+          <button id="source-new" class="notebook-add" type="button" hidden>+ Add source</button>
+        </aside>
+
+        <div class="notebook-main" id="notebook-main">
+          <div id="notebook-empty" class="notebook-empty notebook-empty--main">
+            <span class="eyebrow">Notebook</span>
+            <h3>Your research deserves a place to think.</h3>
+            <p>Create a notebook, add the sources you trust, and turn them into a learning path you can move through at your own pace.</p>
+            <button id="notebook-empty-new" class="btn btn--primary" type="button">Create a notebook</button>
+          </div>
+          <article id="notebook-evidence" class="notebook-evidence" hidden>
+            <div class="notebook-evidence-head"><div><span class="eyebrow">Selected evidence</span><h3 id="notebook-evidence-title">Select a source</h3></div><a id="notebook-evidence-link" href="#" target="_blank" rel="noopener" hidden>Open source ↗</a></div>
+            <p id="notebook-evidence-meta" class="notebook-evidence-meta"></p>
+            <blockquote id="notebook-evidence-excerpt"></blockquote>
+          </article>
+          <section id="notebook-notes" class="notebook-notes" hidden aria-label="Saved notes">
+            <div class="notebook-section-head"><div><span class="eyebrow">Working notes</span><h3>What you are keeping</h3></div><button id="note-new" class="notebook-add" type="button">+ Add note</button></div>
+            <form id="notebook-note-form" class="notebook-form notebook-note-form" hidden>
+              <label><span>Note title</span><input id="note-title" maxlength="160" placeholder="A question, insight, or connection" required /></label>
+              <label><span>Note</span><textarea id="note-body" maxlength="10000" rows="4" placeholder="Write what changed in your understanding…" required></textarea></label>
+              <div class="notebook-form-actions"><button id="note-cancel" class="btn btn--ghost" type="button">Cancel</button><button class="btn btn--primary" type="submit">Keep note</button></div>
+            </form>
+            <div id="notebook-note-list" class="notebook-note-list"></div>
+          </section>
+        </div>
+
+        <aside class="notebook-inspector" aria-label="Learning path">
+          <div class="notebook-panel-head"><div><span class="eyebrow">Learning path</span><h3>Move from context to fluency</h3></div></div>
+          <form id="notebook-path-form" class="notebook-path-form" hidden>
+            <label><span>Depth</span><select id="path-depth"><option value="survey">Survey</option><option value="college" selected>College</option><option value="graduate">Graduate</option></select></label>
+            <label><span>Goal <em>optional</em></span><input id="path-goal" maxlength="10000" placeholder="What should you be able to do?" /></label>
+            <button class="btn btn--primary" type="submit">Build learning path</button>
+          </form>
+          <div id="notebook-path" class="notebook-path"></div>
+          <p id="notebook-path-empty" class="notebook-empty">Your path will start with foundations, then move through comparison and application.</p>
+        </aside>
       </div>
     </section>
 
@@ -96,12 +210,33 @@
     <section class="surface" id="s-library" aria-label="Library" hidden>
       <div class="surface-head">
         <h2>Library</h2>
-        <button id="refresh" class="btn btn--ghost">Refresh</button>
+        <button id="refresh" class="btn btn--ghost" data-tooltip="Reload saved research">Refresh</button>
       </div>
+      <div class="library-tools">
+        <label class="library-select">
+          <span>Project</span>
+          <select id="project-select" title="Choose the local folder for saved outputs"></select>
+        </label>
+        <label class="library-select">
+          <span>Output</span>
+          <select id="output-format" title="Choose the format for the next saved output"></select>
+        </label>
+        <button id="project-new" class="btn btn--ghost" type="button">New project</button>
+      </div>
+      <div class="project-create" id="project-create" hidden>
+        <input id="project-name" type="text" maxlength="120" placeholder="Project name, e.g. Sleep research" />
+        <button id="project-create-cancel" class="btn btn--ghost" type="button">Cancel</button>
+        <button id="project-create-save" class="btn btn--primary" type="button">Create</button>
+      </div>
+      <div class="library-projects">
+        <div class="library-section-label">Projects on this machine</div>
+        <ul id="projects" class="projects"></ul>
+        <p class="empty-note" id="projects-empty">Create a project to keep related outputs together.</p>
+      </div>
+      <div class="library-section-label library-section-label--loose">Loose notes</div>
       <ul id="files" class="lib"></ul>
       <p class="empty-note" id="ws-empty">
-        Nothing kept yet. When an answer is worth building on, press Keep this and
-        it lands here, ready to turn into something.
+        Nothing kept yet. Choose a project and output format, then press Keep this.
       </p>
     </section>
 
@@ -111,13 +246,13 @@
   <aside class="assistant" id="assistant" aria-label="Assistant">
     <div class="asst-head">
       <span>Ask about this</span>
-      <button id="clear" class="btn btn--ghost">Clear</button>
+      <button id="clear" class="btn btn--ghost" data-tooltip="Clear this conversation">Clear</button>
     </div>
     <div id="log" class="log" aria-live="polite"></div>
     <form id="composer" class="composer">
       <textarea id="input" rows="3" aria-label="Ask about what you're reading"
                 placeholder="Ask about what you're reading"></textarea>
-      <button id="send" class="btn btn--primary">Send</button>
+      <button id="send" class="btn btn--primary" data-tooltip="Ask about the current sources">Send</button>
     </form>
     <div class="usage" id="usage"></div>
   </aside>
@@ -174,6 +309,22 @@
       <span class="modal-msg" id="settings-msg" aria-live="polite"></span>
       <button class="btn btn--ghost" id="settings-cancel">Cancel</button>
       <button class="btn btn--primary" id="settings-save">Save</button>
+    </footer>
+  </div>
+</div>
+
+<div class="tour" id="tour" hidden>
+  <div class="tour-card" role="dialog" aria-modal="true" aria-label="Celina guide">
+    <div class="tour-kicker" id="tour-kicker">01 / 03</div>
+    <h2 id="tour-title">Ask a clear question</h2>
+    <p id="tour-body">Start with a question in the main field. Celina breaks it into searches and brings back sources you can inspect.</p>
+    <div class="tour-dots" id="tour-dots" aria-hidden="true"></div>
+    <footer class="tour-foot">
+      <button class="btn wl-text" id="tour-skip" type="button">Skip guide</button>
+      <div class="tour-actions">
+        <button class="btn btn--ghost" id="tour-back" type="button">Back</button>
+        <button class="btn btn--primary" id="tour-next" type="button">Next</button>
+      </div>
     </footer>
   </div>
 </div>

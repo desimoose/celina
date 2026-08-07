@@ -5,6 +5,7 @@ import json
 import os
 import re
 import tempfile
+import urllib.parse
 
 import paths
 
@@ -16,6 +17,7 @@ _EXCERPT_LIMIT = 5000
 _NOTE_BODY_LIMIT = 10000
 _SOURCE_TITLE_LIMIT = 160
 _NOTE_TITLE_LIMIT = 160
+_PATH_DEPTHS = {"survey", "college", "graduate"}
 
 
 def _now():
@@ -129,11 +131,14 @@ def _normalize_source_ids(source_ids, notebook):
     return result
 
 
-def _default_learning_path(goal, sources):
+def _default_learning_path(goal, sources, depth="college"):
+    if depth not in _PATH_DEPTHS:
+        raise ValueError("depth must be one of: survey, college, graduate")
     source_titles = [source["title"] for source in sources if isinstance(source, dict)]
     source_ids = [source["id"] for source in sources if isinstance(source, dict)]
     return {
         "goal": goal,
+        "depth": depth,
         "sections": [
             {
                 "id": "foundations",
@@ -219,7 +224,7 @@ def create_notebook(title, goal=""):
         "updated_at": now,
         "sources": [],
         "notes": [],
-        "learning_path": _default_learning_path(clean_goal, []),
+        "learning_path": _default_learning_path(clean_goal, [], "college"),
     }
     _write_notebook(notebook)
     return notebook
@@ -237,6 +242,10 @@ def add_source(notebook_id, payload):
     excerpt = _clean_text(payload.get("excerpt"), "excerpt", _EXCERPT_LIMIT)
     url = payload.get("url")
     clean_url = _clean_optional_text(url, "url", _URL_LIMIT) if url is not None else ""
+    if clean_url:
+        parsed_url = urllib.parse.urlparse(clean_url)
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+            raise ValueError("url must be an http or https URL")
     kind = payload.get("kind")
     clean_kind = _clean_optional_text(kind, "kind", 64) if kind is not None else ""
     source = {
@@ -286,7 +295,12 @@ def generate_learning_path(notebook_id, payload):
         clean_goal = _clean_text(goal, "goal", _NOTE_BODY_LIMIT, required=False)
         if not clean_goal:
             clean_goal = notebook.get("goal", "")
-    notebook["learning_path"] = _default_learning_path(clean_goal, notebook["sources"])
+    depth = payload.get("depth")
+    if depth is None:
+        depth = notebook.get("learning_path", {}).get("depth", "college")
+    if depth not in _PATH_DEPTHS:
+        raise ValueError("depth must be one of: survey, college, graduate")
+    notebook["learning_path"] = _default_learning_path(clean_goal, notebook["sources"], depth)
     notebook["updated_at"] = _now()
     _write_notebook(notebook)
     return notebook["learning_path"]

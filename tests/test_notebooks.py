@@ -94,6 +94,20 @@ class NotebooksTest(unittest.TestCase):
         self.assertIn("Circadian rhythms", json.dumps(path))
         self.assertIn(source["id"], json.dumps(path))
 
+    def test_generate_learning_path_preserves_requested_depth(self):
+        notebook = self.notebooks.create_notebook("Depth study")
+        path = self.notebooks.generate_learning_path(notebook["id"], {"depth": "graduate"})
+        self.assertEqual(path["depth"], "graduate")
+        with self.assertRaisesRegex(ValueError, "depth"):
+            self.notebooks.generate_learning_path(notebook["id"], {"depth": "expert"})
+
+    def test_add_source_rejects_non_http_urls(self):
+        notebook = self.notebooks.create_notebook("URL safety")
+        with self.assertRaisesRegex(ValueError, "http or https"):
+            self.notebooks.add_source(
+                notebook["id"], {"title": "Unsafe", "url": "javascript:alert(1)", "excerpt": "Text"}
+            )
+
     def test_store_uses_workspace_notebooks_files(self):
         notebook = self.notebooks.create_notebook("My notebook")
         target = os.path.join(self.data_root, "workspace", "notebooks", f"{notebook['id']}.json")

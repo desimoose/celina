@@ -132,6 +132,7 @@ class LocalSecurityTest(unittest.TestCase):
             "created_at": "2026-07-26T00:00:00.000Z",
             "last_active_at": "2026-07-26T01:00:00.000Z",
             "content_recording": True,
+            "incognito": False,
             "recovery_required": False,
         })
 

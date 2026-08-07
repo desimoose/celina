@@ -12,7 +12,14 @@ const state = {
   viewing: null,       // { title, text } in the reader
   results: null,       // last search result (answer + sources)
   activeFile: null,
+  projects: [],
+  projectId: null,
+  notebooks: [],
+  activeNotebook: null,
+  activeNotebookSourceId: null,
+  outputFormat: "markdown",
   sessionId: null,      // local research session (created on first search)
+  incognito: false,     // ephemeral search session; deleted on end or page close
   activeRunId: null,    // the bounded search run currently streaming
   eventSource: null,    // its live trace connection
   mascot: { notices: [], unread: 0, panelOpen: false },
@@ -70,9 +77,12 @@ function releaseFocus(focusInstead) {
 
 async function boot() {
   await refreshConfig();
-  await loadFiles();
+  try { await loadFiles(); } catch (err) { setEngine("Could not load Library: " + err.message); }
+  try { await loadProjects(); } catch (err) { setEngine("Library is unavailable: " + err.message); }
+  await loadNotebooks();
   wireNav();
   wireSettings();
+  wireTour();
   wireWelcome();
   maybeWelcome();
   checkForUpdate();  // fire-and-forget - never blocks or delays boot
@@ -300,6 +310,79 @@ function closeSettings() {
   releaseFocus();
 }
 
+// ---------- guide / walkthrough ----------
+
+const TOUR_STEPS = [
+  {
+    title: "Ask a clear question",
+    body: "Start with a question in the main field. Celina breaks it into searches and brings back sources you can inspect.",
+  },
+  {
+    title: "Inspect what came back",
+    body: "Read the answer, open the cited sources, and watch the trace when you want to see what Celina is doing.",
+  },
+  {
+    title: "Keep useful work",
+    body: "When something is worth building on, choose Keep this. Your note stays in the local Library on this machine.",
+  },
+];
+let tourIndex = 0;
+
+function wireTour() {
+  $("guide-open").addEventListener("click", () => openTour());
+  $("guide-open-inline").addEventListener("click", () => openTour());
+  $("tour-next").addEventListener("click", nextTourStep);
+  $("tour-back").addEventListener("click", previousTourStep);
+  $("tour-skip").addEventListener("click", closeTour);
+  $("tour").addEventListener("click", (e) => {
+    if (e.target.id === "tour") closeTour();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("tour").hidden) closeTour();
+  });
+}
+
+function openTour(start = 0) {
+  tourIndex = Math.max(0, Math.min(start, TOUR_STEPS.length - 1));
+  renderTour();
+  $("tour").hidden = false;
+  trapFocus($("tour"));
+}
+
+function renderTour() {
+  const step = TOUR_STEPS[tourIndex];
+  $("tour-kicker").textContent = `${String(tourIndex + 1).padStart(2, "0")} / ${String(TOUR_STEPS.length).padStart(2, "0")}`;
+  $("tour-title").textContent = step.title;
+  $("tour-body").textContent = step.body;
+  $("tour-back").disabled = tourIndex === 0;
+  $("tour-next").textContent = tourIndex === TOUR_STEPS.length - 1 ? "Finish" : "Next";
+  $("tour-dots").replaceChildren(...TOUR_STEPS.map((_, i) => {
+    const dot = document.createElement("span");
+    dot.className = `tour-dot${i === tourIndex ? " is-active" : ""}`;
+    return dot;
+  }));
+}
+
+function nextTourStep() {
+  if (tourIndex === TOUR_STEPS.length - 1) return closeTour();
+  tourIndex += 1;
+  renderTour();
+  $("tour-next").focus();
+}
+
+function previousTourStep() {
+  if (tourIndex === 0) return;
+  tourIndex -= 1;
+  renderTour();
+  $("tour-back").focus();
+}
+
+function closeTour() {
+  $("tour").hidden = true;
+  localStorage.setItem("celina-tour-seen", "1");
+  releaseFocus();
+}
+
 // ---------- navigation ----------
 
 function wireNav() {
@@ -312,9 +395,20 @@ function nav(view) {
   state.view = view;
   document.querySelectorAll(".navbtn").forEach((b) =>
     b.classList.toggle("is-active", b.dataset.view === view));
-  const map = { work: "s-work", library: "s-library" };
+  const map = { work: "s-work", library: "s-library", notebook: "s-notebook" };
   Object.entries(map).forEach(([v, id]) => { $(id).hidden = v !== view; });
-  if (view === "library") loadFiles();
+  if (view === "library") { loadFiles(); loadProjects(); }
+  if (view === "notebook") {
+    loadNotebooks();
+    const head = document.querySelector(".asst-head span");
+    if (head) head.textContent = "Ask about this notebook";
+    $("input").placeholder = "Ask about the sources and notes";
+    renderNotebook();
+  } else {
+    const head = document.querySelector(".asst-head span");
+    if (head) head.textContent = "Ask about this";
+    $("input").placeholder = "Ask about what you’re reading";
+  }
 }
 
 // ---------- source (what Studio + Assistant work from) ----------
@@ -332,7 +426,244 @@ function currentSource() {
 }
 
 function contextText() {
+  if (state.view === "notebook" && state.activeNotebook) return notebookContextText();
   return currentSource()?.text || "";
+}
+
+// ---------- notebook (source-grounded learning workspace) ----------
+
+function notebookHeaders() {
+  return {
+    "content-type": "application/json",
+    "X-Celina-CSRF": csrfToken(),
+    "Origin": window.location.origin,
+  };
+}
+
+async function loadNotebooks() {
+  try {
+    const data = await fetch("/api/notebooks").then((r) => r.json());
+    if (data.error) throw new Error(data.error);
+    state.notebooks = data.notebooks || [];
+    if (state.activeNotebook && state.notebooks.some((n) => n.id === state.activeNotebook.id)) {
+      await selectNotebook(state.activeNotebook.id, false);
+    } else if (state.notebooks.length) {
+      await selectNotebook(state.notebooks[0].id, false);
+    } else {
+      state.activeNotebook = null;
+      state.activeNotebookSourceId = null;
+      renderNotebook();
+    }
+  } catch (err) {
+    setEngine("Could not load notebooks: " + err.message);
+  }
+}
+
+async function selectNotebook(id, announce = true) {
+  if (!id) return;
+  try {
+    const data = await fetch(`/api/notebooks/${encodeURIComponent(id)}`).then((r) => r.json());
+    if (data.error) throw new Error(data.error);
+    state.activeNotebook = data.notebook;
+    const sources = state.activeNotebook.sources || [];
+    if (!sources.some((source) => source.id === state.activeNotebookSourceId)) {
+      state.activeNotebookSourceId = sources[0]?.id || null;
+    }
+    renderNotebook();
+    if (announce) setEngine(`Notebook: ${state.activeNotebook.title}`);
+  } catch (err) {
+    setEngine("Could not open notebook: " + err.message);
+  }
+}
+
+function renderNotebook() {
+  const notebook = state.activeNotebook;
+  const empty = !notebook;
+  $("notebook-empty").hidden = !empty;
+  $("notebook-evidence").hidden = empty || !(notebook.sources || []).length;
+  $("notebook-notes").hidden = empty;
+  $("notebook-path-form").hidden = empty;
+  $("source-new").hidden = empty;
+  $("notebook-source-form").hidden = true;
+  $("notebook-note-form").hidden = true;
+  $("notebook-path-empty").hidden = empty || Boolean(notebook.learning_path?.sections?.length);
+  $("notebook-title").textContent = notebook?.title || "Choose a notebook";
+  $("notebook-goal").textContent = notebook?.goal || "Bring a question, a paper, or a subject you want to understand.";
+
+  const select = $("notebook-select");
+  select.replaceChildren();
+  if (!state.notebooks.length) {
+    const option = document.createElement("option");
+    option.textContent = "No notebooks yet";
+    option.disabled = true;
+    select.appendChild(option);
+  } else {
+    state.notebooks.forEach((item) => {
+      const option = document.createElement("option");
+      option.value = item.id;
+      option.textContent = item.title;
+      option.selected = item.id === notebook?.id;
+      select.appendChild(option);
+    });
+  }
+
+  const sources = notebook?.sources || [];
+  $("notebook-source-count").textContent = String(sources.length).padStart(2, "0");
+  $("notebook-sources-empty").hidden = !notebook || sources.length > 0;
+  const sourceList = $("notebook-source-list");
+  sourceList.replaceChildren(...sources.map((source) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `notebook-source${source.id === state.activeNotebookSourceId ? " is-active" : ""}`;
+    const title = document.createElement("span");
+    title.className = "notebook-source-title";
+    title.textContent = source.title;
+    const meta = document.createElement("span");
+    meta.className = "notebook-source-meta";
+    meta.textContent = source.kind || (source.url ? "linked source" : "local excerpt");
+    button.append(title, meta);
+    button.onclick = () => { state.activeNotebookSourceId = source.id; renderNotebook(); };
+    return button;
+  }));
+
+  const active = sources.find((source) => source.id === state.activeNotebookSourceId);
+  if (active) {
+    $("notebook-evidence").hidden = false;
+    $("notebook-evidence-title").textContent = active.title;
+    $("notebook-evidence-meta").textContent = [active.kind, active.url ? "linked source" : "local excerpt"].filter(Boolean).join(" · ");
+    $("notebook-evidence-excerpt").textContent = active.excerpt;
+    const link = $("notebook-evidence-link");
+    link.hidden = !active.url;
+    if (active.url) link.href = active.url;
+  }
+
+  const noteList = $("notebook-note-list");
+  noteList.replaceChildren(...(notebook?.notes || []).map((note) => {
+    const article = document.createElement("article");
+    article.className = "notebook-note";
+    const title = document.createElement("h4");
+    title.textContent = note.title;
+    const body = document.createElement("p");
+    body.textContent = note.body;
+    const meta = document.createElement("span");
+    meta.className = "notebook-note-meta";
+    meta.textContent = note.source_ids?.length ? `grounded in ${note.source_ids.length} source${note.source_ids.length === 1 ? "" : "s"}` : "working note";
+    article.append(title, body, meta);
+    return article;
+  }));
+
+  const path = notebook?.learning_path;
+  const pathWrap = $("notebook-path");
+  pathWrap.replaceChildren(...(path?.sections || []).map((section) => {
+    const article = document.createElement("article");
+    article.className = "notebook-path-section";
+    const heading = document.createElement("h4");
+    heading.textContent = section.title;
+    const list = document.createElement("ol");
+    (section.items || []).forEach((item) => {
+      const li = document.createElement("li");
+      li.textContent = item.text;
+      list.appendChild(li);
+    });
+    article.append(heading, list);
+    return article;
+  }));
+  if (path) {
+    $("path-depth").value = path.depth || "college";
+    $("path-goal").value = path.goal || "";
+  }
+}
+
+function showNotebookCreate() {
+  $("notebook-create").hidden = false;
+  $("notebook-name").focus();
+}
+
+function hideNotebookCreate() {
+  $("notebook-create").hidden = true;
+  $("notebook-name").value = "";
+  $("notebook-goal-input").value = "";
+}
+
+async function createNotebook() {
+  const title = $("notebook-name").value.trim();
+  const goal = $("notebook-goal-input").value.trim();
+  if (!title) return $("notebook-name").focus();
+  const data = await fetch("/api/notebooks", {
+    method: "POST", headers: notebookHeaders(), body: JSON.stringify({ title, goal }),
+  }).then((r) => r.json());
+  if (data.error) return setEngine("Could not create notebook: " + data.error);
+  hideNotebookCreate();
+  state.notebooks = [data.notebook, ...state.notebooks.filter((n) => n.id !== data.notebook.id)];
+  await selectNotebook(data.notebook.id);
+  notifyWhenReady("Notebook ready", "Add a source, then build a path through it.");
+}
+
+function toggleNotebookForm(id, show) {
+  $(id).hidden = !show;
+  if (show) $(id).querySelector("input, textarea")?.focus();
+}
+
+async function addNotebookSource(e) {
+  e.preventDefault();
+  if (!state.activeNotebook) return;
+  const payload = {
+    title: $("source-title").value.trim(), url: $("source-url").value.trim(),
+    excerpt: $("source-excerpt").value.trim(), kind: $("source-kind").value.trim(),
+  };
+  const data = await fetch(`/api/notebooks/${encodeURIComponent(state.activeNotebook.id)}/sources`, {
+    method: "POST", headers: notebookHeaders(), body: JSON.stringify(payload),
+  }).then((r) => r.json());
+  if (data.error) return setEngine("Could not add source: " + data.error);
+  $("notebook-source-form").reset();
+  toggleNotebookForm("notebook-source-form", false);
+  await selectNotebook(state.activeNotebook.id);
+  state.activeNotebookSourceId = data.source.id;
+  renderNotebook();
+}
+
+async function addNotebookNote(e) {
+  e.preventDefault();
+  if (!state.activeNotebook) return;
+  const payload = {
+    title: $("note-title").value.trim(), body: $("note-body").value.trim(),
+    source_ids: state.activeNotebookSourceId ? [state.activeNotebookSourceId] : [],
+  };
+  const data = await fetch(`/api/notebooks/${encodeURIComponent(state.activeNotebook.id)}/notes`, {
+    method: "POST", headers: notebookHeaders(), body: JSON.stringify(payload),
+  }).then((r) => r.json());
+  if (data.error) return setEngine("Could not keep note: " + data.error);
+  $("notebook-note-form").reset();
+  toggleNotebookForm("notebook-note-form", false);
+  await selectNotebook(state.activeNotebook.id);
+}
+
+async function generateNotebookPath(e) {
+  e.preventDefault();
+  if (!state.activeNotebook) return;
+  const data = await fetch(`/api/notebooks/${encodeURIComponent(state.activeNotebook.id)}/learning-path`, {
+    method: "POST", headers: notebookHeaders(), body: JSON.stringify({ depth: $("path-depth").value, goal: $("path-goal").value.trim() }),
+  }).then((r) => r.json());
+  if (data.error) return setEngine("Could not build path: " + data.error);
+  state.activeNotebook.learning_path = data.learning_path;
+  renderNotebook();
+  setEngine("Learning path ready");
+}
+
+function notebookContextText() {
+  const notebook = state.activeNotebook;
+  if (!notebook) return "";
+  const chunks = [`Notebook: ${notebook.title}`, `Learning goal: ${notebook.goal || "not specified"}`];
+  (notebook.sources || []).forEach((source, i) => {
+    chunks.push(`Source ${i + 1}: ${source.title}\n${(source.excerpt || "").slice(0, 7000)}`);
+  });
+  (notebook.notes || []).forEach((note, i) => {
+    chunks.push(`Note ${i + 1}: ${note.title}\n${(note.body || "").slice(0, 5000)}`);
+  });
+  (notebook.learning_path?.sections || []).forEach((section) => {
+    chunks.push(`${section.title}:\n${(section.items || []).map((item) => item.text).join("\n")}`);
+  });
+  return chunks.join("\n\n").slice(0, 40000);
 }
 
 // ---------- workspace / library ----------
@@ -353,6 +684,122 @@ async function loadFiles() {
     li.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } };
     ul.appendChild(li);
   }
+}
+
+async function loadProjects() {
+  const data = await fetch("/api/projects").then((r) => r.json());
+  if (data.error) throw new Error(data.error);
+  state.projects = data.projects || [];
+  const formats = data.formats || [];
+  const formatSelect = $("output-format");
+  const projectSelect = $("project-select");
+  const currentProject = state.projects.find((p) => p.id === state.projectId);
+  if (!currentProject) state.projectId = state.projects[0]?.id || null;
+  if (!formats.some((format) => format.id === state.outputFormat)) {
+    state.outputFormat = formats[0]?.id || "markdown";
+  }
+  formatSelect.replaceChildren(...formats.map((format) => {
+    const option = document.createElement("option");
+    option.value = format.id;
+    option.textContent = format.label;
+    option.selected = format.id === state.outputFormat;
+    return option;
+  }));
+  projectSelect.replaceChildren(...state.projects.map((project) => {
+    const option = document.createElement("option");
+    option.value = project.id;
+    option.textContent = project.name;
+    option.selected = project.id === state.projectId;
+    return option;
+  }));
+  renderProjects();
+}
+
+function renderProjects() {
+  const list = $("projects");
+  list.replaceChildren();
+  $("projects-empty").style.display = state.projects.length ? "none" : "block";
+  state.projects.forEach((project) => {
+    const card = document.createElement("li");
+    card.className = `project-card${project.id === state.projectId ? " is-active" : ""}`;
+    const head = document.createElement("div");
+    head.className = "project-card-head";
+    head.innerHTML = `<span class="project-card-name">${escapeHtml(project.name)}</span>`
+      + `<span class="project-card-meta">${project.outputs.length} output${project.outputs.length === 1 ? "" : "s"}</span>`;
+    card.appendChild(head);
+    const outputs = document.createElement("ul");
+    outputs.className = "project-outputs";
+    if (!project.outputs.length) {
+      const empty = document.createElement("li");
+      empty.className = "project-empty";
+      empty.textContent = "No outputs yet. Keep a result here.";
+      outputs.appendChild(empty);
+    } else {
+      project.outputs.forEach((output) => {
+        const item = document.createElement("li");
+        const button = document.createElement("button");
+        button.className = "project-output";
+        button.type = "button";
+        button.title = `Open ${output.format_label} output`;
+        button.innerHTML = `<span class="project-output-name">${escapeHtml(output.name)}</span>`
+          + `<span class="project-output-format">${escapeHtml(output.format_label)}</span>`;
+        button.onclick = () => openProjectOutput(project.id, output);
+        item.appendChild(button);
+        outputs.appendChild(item);
+      });
+    }
+    card.appendChild(outputs);
+    list.appendChild(card);
+  });
+}
+
+async function openProjectOutput(projectId, output) {
+  const data = await fetch(`/api/projects/${encodeURIComponent(projectId)}/outputs/${encodeURIComponent(output.name)}`).then((r) => r.json());
+  if (data.error) return setEngine("could not open: " + data.error);
+  state.activeFile = `projects/${projectId}/outputs/${output.name}`;
+  state.viewing = { title: output.name, text: data.content };
+  state.results = null;
+  $("url").value = "";
+  if (output.format === "html") {
+    const frame = document.createElement("iframe");
+    frame.setAttribute("sandbox", "");
+    frame.srcdoc = data.content;
+    $("view").replaceChildren(frame);
+  } else {
+    showText(data.content);
+  }
+  $("save").disabled = true;
+  setEngine(`Project output · ${output.name}`);
+  nav("work");
+}
+
+function showProjectCreate() {
+  $("project-create").hidden = false;
+  $("project-name").value = "";
+  $("project-name").focus();
+}
+
+function hideProjectCreate() {
+  $("project-create").hidden = true;
+}
+
+async function createProject() {
+  const name = $("project-name").value.trim();
+  if (!name) return $("project-name").focus();
+  const res = await fetch("/api/projects", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "X-Celina-CSRF": csrfToken(),
+      "Origin": window.location.origin,
+    },
+    body: JSON.stringify({ name }),
+  }).then((r) => r.json());
+  if (res.error) return setEngine("Could not create project: " + res.error);
+  state.projectId = res.id;
+  hideProjectCreate();
+  await loadProjects();
+  setEngine(`Project ready · ${res.name}`);
 }
 
 async function openArtifact(file) {
@@ -504,11 +951,43 @@ async function ensureSession() {
   const res = await fetch("/api/sessions", {
     method: "POST",
     headers: { "content-type": "application/json", "X-Celina-CSRF": csrfToken() },
-    body: JSON.stringify({ content_recording: true }),
+    body: JSON.stringify({ content_recording: !state.incognito, incognito: state.incognito }),
   }).then((r) => r.json());
   if (res.error) throw new Error(res.error);
   state.sessionId = res.session_id;
   return state.sessionId;
+}
+
+async function deleteCurrentSession() {
+  const sessionId = state.sessionId;
+  if (!sessionId) return true;
+  state.sessionId = null;
+  try {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+      headers: { "X-Celina-CSRF": csrfToken(), "Origin": window.location.origin },
+    }).then((r) => r.json());
+    if (res.error) throw new Error(res.error);
+    return true;
+  } catch (err) {
+    setEngine("Could not delete session: " + err.message);
+    return false;
+  }
+}
+
+async function setIncognitoMode(e) {
+  const requested = e.target.checked;
+  if (state.activeRunId) {
+    e.target.checked = state.incognito;
+    setEngine("Finish or stop the current search before changing privacy mode");
+    return;
+  }
+  if (state.sessionId && !(await deleteCurrentSession())) {
+    e.target.checked = state.incognito;
+    return;
+  }
+  state.incognito = requested;
+  setEngine(requested ? "Incognito on · session auto-deletes" : "Incognito off · sessions auto-delete after 24 hours");
 }
 
 async function startSearchRun(query, provider) {
@@ -522,12 +1001,39 @@ async function startSearchRun(query, provider) {
   return res;
 }
 
+function resetResearchLoop() {
+  $("research-loop").hidden = true;
+  $("research-loop-count").textContent = "Preparing focused questions";
+  $("research-loop-questions").replaceChildren();
+}
+
+function renderResearchLoop(queries, currentQuery = "") {
+  const list = $("research-loop-questions");
+  list.replaceChildren(...queries.map((query) => {
+    const item = document.createElement("li");
+    item.textContent = query;
+    if (query === currentQuery) item.classList.add("is-current");
+    return item;
+  }));
+  $("research-loop-count").textContent = `${queries.length} question${queries.length === 1 ? "" : "s"} in this pass`;
+  $("research-loop").hidden = false;
+}
+
+function markResearchQuestion(query, done = false) {
+  document.querySelectorAll("#research-loop-questions li").forEach((item) => {
+    const matches = item.textContent === query;
+    item.classList.toggle("is-current", matches && !done);
+    if (matches && done) item.classList.add("is-done");
+  });
+}
+
 async function findPapers() {
   const q = $("url").value.trim();
   if (!q) return;
   if (looksLikeUrl(q)) return openUrl();
   if (state.activeRunId) return;   // one bounded run at a time
   setMascotState("resting");
+  resetResearchLoop();
   setEngine("Finding real sources…");
   $("find").disabled = true;
   $("stop").hidden = false;
@@ -558,6 +1064,18 @@ function watchRun(runId, eventsUrl, query) {
     let payload;
     try { payload = JSON.parse(e.data); } catch { return; }
     $("engine").textContent = payload.summary || "";
+    if (payload.kind === "plan.completed") {
+      const queries = payload.details?.queries || [];
+      if (queries.length) renderResearchLoop(queries);
+    }
+    if (payload.kind === "query.started") {
+      const query = payload.details?.query || "";
+      if (query) markResearchQuestion(query);
+    }
+    if (payload.kind === "query.completed" || payload.kind === "query.failed") {
+      const query = payload.details?.query || "";
+      if (query) markResearchQuestion(query, true);
+    }
     if (payload.phase && payload.phase !== announcedPhase) {
       announcedPhase = payload.phase;
       announce(payload.summary || "");
@@ -711,19 +1229,62 @@ function briefMarkdown(d) {
   return out.join("\n");
 }
 
+function briefHtml(d, title) {
+  const sources = (d.results || []).map((r) => {
+    const link = r.oa_url || r.url;
+    return `<li><strong>${escapeHtml(r.title || "untitled")}</strong>`
+      + (link ? ` · <a href="${escapeHtml(link)}">${escapeHtml(link)}</a>` : "")
+      + (r.abstract ? `<p>${escapeHtml(r.abstract)}</p>` : "")
+      + "</li>";
+  }).join("");
+  return `<!doctype html><meta charset="utf-8"><title>${escapeHtml(title)}</title>`
+    + `<article><h1>${escapeHtml(title)}</h1><p>Saved ${new Date().toISOString()}</p>`
+    + `<h2>Grounded answer</h2><p>${escapeHtml(d.answer || "No grounded answer.").replace(/\n/g, "<br>")}</p>`
+    + `<h2>Sources</h2><ol>${sources}</ol></article>`;
+}
+
+function formatOutput(d, format, title) {
+  if (format === "markdown") {
+    if (d.results) return briefMarkdown(d);
+    return `# ${title}\n\nSaved ${new Date().toISOString()}\n\n---\n\n${d.text || ""}`;
+  }
+  if (format === "html") {
+    if (d.results) return briefHtml(d, title);
+    return `<!doctype html><meta charset="utf-8"><title>${escapeHtml(title)}</title><article><h1>${escapeHtml(title)}</h1><pre>${escapeHtml(d.text || "")}</pre></article>`;
+  }
+  if (format === "json") {
+    return JSON.stringify({ ...d, title, saved_at: new Date().toISOString() }, null, 2);
+  }
+  if (d.results) {
+    return [d.answer || "No grounded answer.", "", ...(d.results || []).map((r, i) =>
+      `[${i + 1}] ${r.title || "untitled"}${r.url ? `\n${r.url}` : ""}`)].join("\n");
+  }
+  return `${title}\n\n${d.text || ""}`;
+}
+
 async function saveCurrent() {
-  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-  let title, content;
+  if (!state.projectId) await loadProjects();
+  if (!state.projectId) return setEngine("Create a project before saving");
+  let title, source;
   if (state.viewing) {
     title = state.viewing.title;
-    content = `# ${title}\n\nSaved ${new Date().toISOString()}\n\n---\n\n${state.viewing.text}`;
+    source = { title, text: state.viewing.text };
   } else if (state.results) {
     title = state.results.query || "research";
-    content = briefMarkdown(state.results);
+    source = state.results;
   } else { return; }
-  const res = await fetch("/api/workspace/save", {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ path: `${stamp}-${slugify(title)}.md`, content }),
+  const res = await fetch(`/api/projects/${encodeURIComponent(state.projectId)}/outputs`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "X-Celina-CSRF": csrfToken(),
+      "Origin": window.location.origin,
+    },
+    body: JSON.stringify({
+      title: slugify(title),
+      format: state.outputFormat,
+      content: formatOutput(source, state.outputFormat, title),
+    }),
   }).then((r) => r.json());
   if (res.error) {
     setEngine("Could not keep it: " + res.error);
@@ -733,7 +1294,7 @@ async function saveCurrent() {
     notifyWhenReady("Saved to Library", "The note is ready in your Library.");
   }
   $("save").disabled = true;
-  loadFiles();
+  await loadProjects();
 }
 
 // ---------- assistant ----------
@@ -809,8 +1370,28 @@ $("stop").onclick = stopActiveRun;
 $("go").onclick = openUrl;
 $("url").addEventListener("keydown", (e) => { if (e.key === "Enter") findPapers(); });
 $("save").onclick = saveCurrent;
+$("incognito-toggle").onchange = setIncognitoMode;
 $("example-q").onclick = () => { $("url").value = "does caffeine affect sleep?"; findPapers(); };
 $("refresh").onclick = loadFiles;
+$("project-select").onchange = (e) => { state.projectId = e.target.value; renderProjects(); };
+$("output-format").onchange = (e) => { state.outputFormat = e.target.value; };
+$("project-new").onclick = showProjectCreate;
+$("project-create-cancel").onclick = hideProjectCreate;
+$("project-create-save").onclick = createProject;
+$("project-name").addEventListener("keydown", (e) => { if (e.key === "Enter") createProject(); });
+$("notebook-select").onchange = (e) => selectNotebook(e.target.value);
+$("notebook-new").onclick = showNotebookCreate;
+$("notebook-empty-new").onclick = showNotebookCreate;
+$("notebook-create-cancel").onclick = hideNotebookCreate;
+$("notebook-create-save").onclick = createNotebook;
+$("notebook-name").addEventListener("keydown", (e) => { if (e.key === "Enter") createNotebook(); });
+$("source-new").onclick = () => toggleNotebookForm("notebook-source-form", true);
+$("source-cancel").onclick = () => toggleNotebookForm("notebook-source-form", false);
+$("notebook-source-form").addEventListener("submit", addNotebookSource);
+$("note-new").onclick = () => toggleNotebookForm("notebook-note-form", true);
+$("note-cancel").onclick = () => toggleNotebookForm("notebook-note-form", false);
+$("notebook-note-form").addEventListener("submit", addNotebookNote);
+$("notebook-path-form").addEventListener("submit", generateNotebookPath);
 $("composer").addEventListener("submit", send);
 $("clear").onclick = () => { state.history = []; $("log").innerHTML = ""; $("usage").textContent = ""; };
 $("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("composer").requestSubmit(); });
@@ -820,6 +1401,14 @@ $("mascot-enable-notify").onclick = enableNotifications;
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.mascot.panelOpen) closeMascotPanel(); });
 document.addEventListener("click", (e) => {
   if (state.mascot.panelOpen && !$("mascot").contains(e.target)) closeMascotPanel();
+});
+window.addEventListener("pagehide", () => {
+  if (!state.incognito || !state.sessionId) return;
+  fetch(`/api/sessions/${encodeURIComponent(state.sessionId)}`, {
+    method: "DELETE",
+    headers: { "X-Celina-CSRF": csrfToken(), "Origin": window.location.origin },
+    keepalive: true,
+  });
 });
 renderMascotPanel();
 

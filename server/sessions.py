@@ -36,6 +36,7 @@ class Session:
     last_active_at: str
     state: str
     content_recording: bool
+    incognito: bool
     recovery_required: bool
 
 
@@ -51,9 +52,16 @@ class SessionStore:
         self.root = os.path.realpath(root or paths.sessions_dir())
         os.makedirs(self.root, exist_ok=True)
 
-    def create(self, content_recording=True):
+    def create(self, content_recording=True, incognito=False):
+        if not isinstance(content_recording, bool):
+            raise ValueError("content_recording must be a boolean")
+        if not isinstance(incognito, bool):
+            raise ValueError("incognito must be a boolean")
         session_id = str(uuid.uuid4())
         directory = self._directory(session_id, create=True)
+        if incognito:
+            with open(os.path.join(directory, ".incognito"), "x", encoding="utf-8"):
+                pass
         database = os.path.join(directory, _DB_NAME)
         now = _utc_now()
         with self._connection(database) as connection:
@@ -107,6 +115,32 @@ class SessionStore:
             if item is not None:
                 sessions.append(item)
         return sessions
+
+    def cleanup(self, retention_seconds=86400, now=None):
+        """Delete expired stopped sessions and all sessions marked incognito."""
+        if not isinstance(retention_seconds, (int, float)) or retention_seconds < 0:
+            raise ValueError("retention_seconds must be non-negative")
+        current = now or datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        removed = []
+        for item in self.list():
+            expired = False
+            if item.incognito:
+                expired = True
+            elif item.state in {"stopped", "ending"}:
+                try:
+                    last_active = datetime.fromisoformat(
+                        item.last_active_at.replace("Z", "+00:00")
+                    )
+                    expired = (current - last_active).total_seconds() >= retention_seconds
+                except (TypeError, ValueError):
+                    expired = False
+            if expired:
+                result = self.delete(item.session_id)
+                if result.deleted:
+                    removed.append(item.session_id)
+        return removed
 
     def mark_stopped(self, session_id):
         return self._set_state(session_id, "stopped")
@@ -416,14 +450,16 @@ class SessionStore:
         finally:
             connection.close()
 
-    @staticmethod
-    def _session_from_row(row):
+    def _session_from_row(self, row):
         return Session(
             session_id=row["session_id"],
             created_at=row["created_at"],
             last_active_at=row["last_active_at"],
             state=row["state"],
             content_recording=bool(row["content_recording"]),
+            incognito=os.path.isfile(os.path.join(
+                self._directory(row["session_id"], create=False), ".incognito"
+            )),
             recovery_required=bool(row["recovery_required"]),
         )
 

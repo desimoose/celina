@@ -8,6 +8,10 @@ Stdlib only. Serves the web UI and a small JSON API:
   GET  /api/workspace                 list notebook artifacts
   GET  /api/workspace/file            read one artifact
   POST /api/workspace/save            write an artifact
+  GET  /api/projects                   list local projects and outputs
+  POST /api/projects                   create a local project folder
+  POST /api/projects/{id}/outputs      save a formatted project output
+  GET  /api/projects/{id}/outputs/{n}  read one project output
   POST /api/search-runs               start a bounded, observable search run
   GET  /api/search-runs/{id}          read run state
   POST /api/search-runs/{id}/stop     cooperatively stop a run
@@ -233,6 +237,31 @@ class Handler(BaseHTTPRequestHandler):
         return serialization.serialize_session(session)
 
     @staticmethod
+    def _require_object(payload, error):
+        if not isinstance(payload, dict):
+            raise ValueError(error)
+        return payload
+
+    @staticmethod
+    def _notebook_request_value(payload, field, *, limit, required=True):
+        value = payload.get(field)
+        if not isinstance(value, str):
+            raise ValueError(f"{field} must be text")
+        text = value.strip()
+        if required and not text:
+            raise ValueError(f"{field} is required")
+        if len(text) > limit:
+            raise ValueError(f"{field} is too long")
+        return text
+
+    def _safe_notebook_id(self, notebook_id):
+        if not isinstance(notebook_id, str) or not notebooks._SAFE_ID.fullmatch(
+            notebook_id
+        ):
+            raise ValueError("invalid notebook id")
+        return notebook_id
+
+    @staticmethod
     def _traffic_record(record, include_bodies=False):
         value = {
             "traffic_event_id": record["traffic_event_id"],
@@ -309,8 +338,37 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/update-check":
             return self._send(200, update_check.check())
 
+        if route == "/api/notebooks" or route.startswith("/api/notebooks/"):
+            return self._get_notebook_route(route)
+
         if route == "/api/workspace":
             return self._send(200, {"files": self._list_workspace()})
+
+        if route == "/api/projects":
+            try:
+                items = projects.list_projects()
+                if not items:
+                    items = [projects.create_project("Inbox")]
+                return self._send(200, {
+                    "projects": items,
+                    "formats": projects.formats(),
+                })
+            except Exception as e:
+                return self._send(500, {"error": str(e)})
+
+        if route.startswith("/api/projects/"):
+            parts = route.split("/")
+            if len(parts) == 6 and parts[4] == "outputs":
+                try:
+                    content = projects.read_output(parts[3], parts[5])
+                    return self._send(200, {
+                        "project_id": parts[3],
+                        "name": parts[5],
+                        "content": content,
+                    })
+                except (OSError, ValueError):
+                    return self._not_found()
+            return self._not_found()
 
         if route == "/api/workspace/file":
             qs = urllib.parse.parse_qs(parsed.query)
@@ -477,6 +535,23 @@ class Handler(BaseHTTPRequestHandler):
             return self._stream_search_run_events(run_id)
         return self._not_found()
 
+    def _get_notebook_route(self, route):
+        if route == "/api/notebooks":
+            return self._send(200, {"notebooks": notebooks.list_notebooks()})
+
+        prefix = "/api/notebooks/"
+        notebook_id = route[len(prefix):]
+        if not notebook_id or "/" in notebook_id:
+            return self._not_found()
+        try:
+            notebook_id = self._safe_notebook_id(notebook_id)
+            notebook = notebooks.read_notebook(notebook_id)
+        except ValueError as e:
+            return self._send(400, {"error": str(e)})
+        except OSError:
+            return self._not_found()
+        return self._send(200, {"notebook": notebook})
+
     def _post_search_run_route(self, parsed):
         route = parsed.path
         if route == "/api/search-runs":
@@ -639,6 +714,36 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"saved": rel})
         except Exception as e:
             return self._send(400, {"error": str(e)})
+
+    def _create_project(self, payload, query_string):
+        if not self._allows_session_mutation(query_string):
+            return self._forbidden()
+        try:
+            result = projects.create_project(payload.get("name"))
+            return self._send(201, result)
+        except ValueError as e:
+            return self._send(400, {"error": str(e)})
+        except OSError as e:
+            return self._send(500, {"error": f"could not create project: {e}"})
+
+    def _save_project_output(self, parsed, payload):
+        if not self._allows_session_mutation(parsed.query):
+            return self._forbidden()
+        parts = parsed.path.split("/")
+        if len(parts) != 5 or parts[4] != "outputs":
+            return self._not_found()
+        try:
+            result = projects.save_output(
+                parts[3],
+                payload.get("title"),
+                payload.get("format"),
+                payload.get("content"),
+            )
+            return self._send(201, result)
+        except ValueError as e:
+            return self._send(400, {"error": str(e)})
+        except OSError as e:
+            return self._send(500, {"error": f"could not save output: {e}"})
 
     def _get_settings(self):
         return self._send(200, {

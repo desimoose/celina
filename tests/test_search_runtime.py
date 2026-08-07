@@ -417,5 +417,196 @@ class SearchRuntimeEndToEndTest(unittest.TestCase):
         self.assertEqual(reader_calls, [])
 
 
+class StripCodeFenceTest(unittest.TestCase):
+    def test_json_language_tagged_fence_is_unwrapped(self):
+        import search_runtime
+
+        text = '```json\n{"answer": "yes"}\n```'
+        self.assertEqual(
+            search_runtime._strip_code_fence(text), '{"answer": "yes"}'
+        )
+
+    def test_untagged_fence_is_unwrapped(self):
+        import search_runtime
+
+        text = '```\n{"answer": "yes"}\n```'
+        self.assertEqual(
+            search_runtime._strip_code_fence(text), '{"answer": "yes"}'
+        )
+
+    def test_plain_json_is_returned_unchanged(self):
+        import search_runtime
+
+        text = '{"answer": "yes"}'
+        self.assertEqual(search_runtime._strip_code_fence(text), text)
+
+    def test_unterminated_fence_is_left_alone(self):
+        import search_runtime
+
+        text = '```json\n{"answer": "yes"}'
+        self.assertEqual(search_runtime._strip_code_fence(text), text)
+
+
+class CitationIdListTest(unittest.TestCase):
+    def test_plain_id_strings_pass_through(self):
+        import search_runtime
+
+        self.assertEqual(
+            search_runtime._citation_id_list(["C1", "C2"]), ["C1", "C2"]
+        )
+
+    def test_citation_objects_are_reduced_to_their_id(self):
+        import search_runtime
+
+        self.assertEqual(
+            search_runtime._citation_id_list([
+                {"citation_id": "C1", "title": "A paper", "url": "https://x"},
+                {"id": "C2"},
+                "C3",
+            ]),
+            ["C1", "C2", "C3"],
+        )
+
+    def test_non_array_is_rejected(self):
+        import search_runtime
+
+        with self.assertRaises(ValueError):
+            search_runtime._citation_id_list("C1")
+
+
+class EvidencePayloadCapTest(unittest.TestCase):
+    def test_short_evidence_text_is_untouched(self):
+        import search_runtime
+        import evidence as evidence_model
+
+        candidate = evidence_model.Candidate(
+            candidate_id="cand-1", title="Short paper", url="https://x",
+            canonical_url="https://x", source_kind="research",
+            published_at=None, authors=(), snippet=None, open_access=None,
+            retrieval_query_ids=(),
+        )
+        item = evidence_model.Evidence.from_read(candidate, "short body", "text/html", "C1")
+
+        payload = search_runtime._evidence_payload([item])
+
+        self.assertEqual(payload[0]["text"], "short body")
+
+    def test_oversized_evidence_text_is_capped_before_it_reaches_a_provider(self):
+        import search_runtime
+        import evidence as evidence_model
+
+        candidate = evidence_model.Candidate(
+            candidate_id="cand-1", title="A PDF-viewer page", url="https://x",
+            canonical_url="https://x", source_kind="research",
+            published_at=None, authors=(), snippet=None, open_access=None,
+            retrieval_query_ids=(),
+        )
+        huge_text = "word " * 400000  # ~2M characters, like the real PDF-viewer case
+        item = evidence_model.Evidence.from_read(candidate, huge_text, "text/html", "C1")
+
+        payload = search_runtime._evidence_payload([item])
+
+        self.assertLessEqual(
+            len(payload[0]["text"]), search_runtime._MAX_EVIDENCE_CHARS_PER_SOURCE + 40
+        )
+        self.assertTrue(payload[0]["text"].endswith("[truncated for length]"))
+        # The stored evidence itself keeps the full text for local,
+        # tokenless citation verification - only the prompt is capped.
+        self.assertEqual(item.character_count, len(huge_text.strip()))
+
+
+class SynthesisToleratesRealWorldProviderQuirksTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.store = sessions.SessionStore(self.temp.name)
+        self.session = self.store.create()
+        self.bus = events.EventBus(self.store)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_fenced_json_with_object_citations_still_produces_the_real_answer(self):
+        # Reproduces a real openrouter/llama-3.3-70b response shape: the
+        # synthesis JSON wrapped in a markdown fence, with citations as
+        # {citation_id, title, url} objects instead of the requested flat
+        # ID strings.
+        responses = iter([
+            json.dumps({
+                "direct_query": "Does caffeine affect sleep?",
+                "additional_queries": [],
+                "evidence_angles": ["sleep onset"],
+                "summary": "Check controlled evidence on sleep onset.",
+            }),
+            json.dumps({
+                "covered_angles": ["sleep onset"],
+                "gaps": [],
+                "conflicts": [],
+                "follow_up_query": None,
+            }),
+            "```\n" + json.dumps({
+                "answer": "Evening caffeine delayed sleep onset [C1].",
+                "claims": [{
+                    "claim_id": "claim-1",
+                    "text": "Evening caffeine delayed sleep onset",
+                    "citation_ids": ["C1"],
+                }],
+                "citations": [{
+                    "citation_id": "C1",
+                    "title": "Controlled trial",
+                    "url": "https://example.test/trial",
+                }],
+                "uncertainties": [],
+                "conflicts": [],
+                "gaps": [],
+            }) + "\n```",
+        ])
+
+        def fake_provider(provider, _messages, *, system, traffic_context):
+            return {
+                "text": next(responses),
+                "provider": provider,
+                "model": "deterministic-model",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }
+
+        def fake_scan(query, *, traffic_context):
+            return {"results": [{
+                "title": "Controlled trial",
+                "url": "https://example.test/trial",
+                "kind": "research",
+            }]}
+
+        def fake_fetch(url, *, traffic_context):
+            return {
+                "url": url,
+                "text": "A controlled trial found evening caffeine delayed sleep onset.",
+                "content_type": "text/html",
+            }
+
+        import search_runtime
+
+        runtime = search_runtime.SearchRuntime(
+            self.bus,
+            self.store,
+            chat_fn=fake_provider,
+            scan_fn=fake_scan,
+            fetch_fn=fake_fetch,
+        )
+        request = orchestrator.SearchRequest(
+            query="Does caffeine affect sleep?",
+            provider="ollama",
+            constraints={},
+            session_id=self.session.session_id,
+        )
+        completed = runtime.wait(runtime.start(request).run_id, timeout=2)
+
+        self.assertEqual(completed.state, "completed")
+        self.assertEqual(
+            completed.answer["answer"],
+            "Evening caffeine delayed sleep onset [C1].",
+        )
+        self.assertEqual(completed.answer["citations"], ["C1"])
+
+
 if __name__ == "__main__":
     unittest.main()

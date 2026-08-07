@@ -221,7 +221,10 @@ class SearchRuntime:
                     """Return strict JSON only, with answer, claims, citations, """
                     """uncertainties, conflicts, and gaps. Use only the supplied read """
                     """evidence and its stable citation IDs. Claims must contain claim_id, """
-                    """text, and citation_ids. Do not provide hidden reasoning or """
+                    """text, and citation_ids. citations must be a flat array of the """
+                    """citation ID strings actually used, not objects. Respond with the """
+                    """raw JSON object only - no markdown code fences and no prose """
+                    """before or after it. Do not provide hidden reasoning or """
                     """chain-of-thought.""",
                     json.dumps({
                         "question": request.query,
@@ -253,10 +256,23 @@ class SearchRuntime:
         text = result.get("text")
         if not isinstance(text, str):
             raise ValueError("provider returned non-text structured output")
-        parsed = json.loads(text)
+        parsed = json.loads(_strip_code_fence(text))
         if not isinstance(parsed, dict):
             raise ValueError("provider structured output must be an object")
         return parsed
+
+
+def _strip_code_fence(text):
+    """Providers sometimes wrap strict-JSON output in a markdown code fence
+    despite being told not to; tolerate it rather than treating a well-formed
+    answer as a synthesis failure."""
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    lines = stripped.splitlines()
+    if len(lines) >= 2 and lines[-1].strip() == "```":
+        return "\n".join(lines[1:-1]).strip()
+    return stripped
 
 
 def _ensure_active(context, cancellation=None):
@@ -271,6 +287,22 @@ def _string_list(value, limit=None):
     items = [str(item).strip() for item in value if str(item).strip()]
     if limit is not None and len(items) > limit:
         raise ValueError("structured field exceeds its bound")
+    return items
+
+
+def _citation_id_list(value):
+    """Some providers return citation objects ({citation_id, title, url})
+    instead of the requested flat ID strings; pull the ID out either way."""
+    if not isinstance(value, list):
+        raise ValueError("structured field must be an array")
+    items = []
+    for item in value:
+        candidate = item
+        if isinstance(item, dict):
+            candidate = item.get("citation_id") or item.get("id")
+        text = str(candidate or "").strip()
+        if text:
+            items.append(text)
     return items
 
 
@@ -334,7 +366,7 @@ def _validated_synthesis(payload):
     return {
         "answer": answer,
         "claims": clean_claims,
-        "citations": _string_list(payload.get("citations")),
+        "citations": _citation_id_list(payload.get("citations")),
         "uncertainties": _string_list(payload.get("uncertainties")),
         "conflicts": _string_list(payload.get("conflicts")),
         "gaps": _string_list(payload.get("gaps")),
@@ -352,11 +384,27 @@ def _fallback_synthesis():
     }
 
 
+_MAX_EVIDENCE_CHARS_PER_SOURCE = 6000
+
+
 def _evidence_payload(evidence_rows):
+    # A page read can legitimately extract hundreds of thousands of
+    # characters (a PDF-viewer page, for one, dumps every page's text into
+    # the DOM) - sending that whole to a provider blows past any request or
+    # context limit and makes the structured-JSON call fail outright. Cap
+    # what goes into the prompt; the full text stays on Evidence for local,
+    # tokenless citation verification.
     return [{
         "citation_id": item.citation_id,
         "title": item.title,
         "url": item.url,
         "content_type": item.content_type,
-        "text": item.text,
+        "text": _capped_for_prompt(item.text),
     } for item in evidence_rows]
+
+
+def _capped_for_prompt(text):
+    text = text or ""
+    if len(text) <= _MAX_EVIDENCE_CHARS_PER_SOURCE:
+        return text
+    return text[:_MAX_EVIDENCE_CHARS_PER_SOURCE] + "\n\n[truncated for length]"

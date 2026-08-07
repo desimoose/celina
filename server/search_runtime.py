@@ -256,7 +256,7 @@ class SearchRuntime:
         text = result.get("text")
         if not isinstance(text, str):
             raise ValueError("provider returned non-text structured output")
-        parsed = json.loads(_strip_code_fence(text))
+        parsed = _parse_leading_json_object(_strip_code_fence(text))
         if not isinstance(parsed, dict):
             raise ValueError("provider structured output must be an object")
         return parsed
@@ -273,6 +273,19 @@ def _strip_code_fence(text):
     if len(lines) >= 2 and lines[-1].strip() == "```":
         return "\n".join(lines[1:-1]).strip()
     return stripped
+
+
+def _parse_leading_json_object(text):
+    """Parse only the first complete JSON value at the start of text.
+
+    Some models (observed on openrouter/llama-3.3-70b via its DeepInfra
+    backend) emit a well-formed JSON object, then degenerate into garbled
+    tokens or restate the whole answer a second time. json.loads rejects
+    that trailing content outright ("Extra data"); raw_decode stops as soon
+    as it has one complete value, which is exactly what a strict-JSON
+    contract needs - the model's actual answer, ignoring what follows it.
+    """
+    return json.JSONDecoder().raw_decode(text.strip())[0]
 
 
 def _ensure_active(context, cancellation=None):

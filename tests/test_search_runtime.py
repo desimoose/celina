@@ -447,6 +447,37 @@ class StripCodeFenceTest(unittest.TestCase):
         self.assertEqual(search_runtime._strip_code_fence(text), text)
 
 
+class ParseLeadingJsonObjectTest(unittest.TestCase):
+    def test_plain_json_parses(self):
+        import search_runtime
+
+        self.assertEqual(
+            search_runtime._parse_leading_json_object('{"answer": "yes"}'),
+            {"answer": "yes"},
+        )
+
+    def test_trailing_garbage_after_a_complete_object_is_ignored(self):
+        # Reproduces a real openrouter/llama-3.3-70b (DeepInfra backend)
+        # response: a valid JSON object, then degenerate tokens, then the
+        # whole answer restated a second time.
+        import search_runtime
+
+        text = (
+            '{"answer": "yes"} надUTTON garbage more text '
+            'Here is the revised response:\n\n{"answer": "yes again"}'
+        )
+
+        self.assertEqual(
+            search_runtime._parse_leading_json_object(text), {"answer": "yes"}
+        )
+
+    def test_garbage_with_no_leading_json_still_raises(self):
+        import search_runtime
+
+        with self.assertRaises(ValueError):
+            search_runtime._parse_leading_json_object("not json at all")
+
+
 class CitationIdListTest(unittest.TestCase):
     def test_plain_id_strings_pass_through(self):
         import search_runtime

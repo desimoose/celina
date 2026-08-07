@@ -49,7 +49,8 @@
         <button id="stop" class="btn btn--ghost" hidden>Stop</button>
         <button id="go" class="btn btn--ghost">Read a link</button>
         <button id="save" class="btn btn--primary" disabled>Keep this</button>
-        <div class="status" id="engine" aria-live="polite"></div>
+        <div class="status" id="engine"></div>
+        <div id="engine-announce" class="sr-only" aria-live="polite" aria-atomic="true"></div>
       </div>
       <div class="view" id="view">
         <div class="empty">
@@ -96,7 +97,7 @@
 </div>
 
 <div class="welcome" id="welcome" hidden>
-  <div class="welcome-card">
+  <div class="welcome-card" role="dialog" aria-modal="true" aria-label="Welcome to Celina">
     <section class="wl-step" data-step="intro">
       <img class="wl-logo" src="/celina.svg" alt="Celina" />
       <p class="wl-lead">Celina finds real sources, answers you plainly, and helps

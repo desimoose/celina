@@ -26,6 +26,45 @@ const escapeHtml = (s) =>
 const looksLikeUrl = (s) => /^https?:\/\//i.test(s);
 const csrfToken = () => document.querySelector('meta[name="celina-csrf"]')?.content || "";
 
+// ---------- accessibility: focus trap for modal-style overlays ----------
+
+const FOCUSABLE = 'a[href], button:not([disabled]), textarea:not([disabled]), '
+  + 'input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+let activeTrap = null;
+
+function focusablesIn(container) {
+  return Array.from(container.querySelectorAll(FOCUSABLE))
+    .filter((el) => el.offsetParent !== null);
+}
+
+// Keeps Tab/Shift+Tab cycling inside container while it's open, moves focus
+// in on open, and restores it on release - the overlay never lets keyboard
+// focus leak onto the page underneath.
+function trapFocus(container) {
+  releaseFocus();
+  const previouslyFocused = document.activeElement;
+  const onKeydown = (e) => {
+    if (e.key !== "Tab") return;
+    const items = focusablesIn(container);
+    if (!items.length) return;
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+  container.addEventListener("keydown", onKeydown);
+  (focusablesIn(container)[0] || container).focus();
+  activeTrap = { container, onKeydown, previouslyFocused };
+}
+
+function releaseFocus(focusInstead) {
+  if (!activeTrap) return;
+  const { container, onKeydown, previouslyFocused } = activeTrap;
+  container.removeEventListener("keydown", onKeydown);
+  activeTrap = null;
+  const target = focusInstead || previouslyFocused;
+  if (target && typeof target.focus === "function") target.focus();
+}
+
 // ---------- boot ----------
 
 async function boot() {
@@ -74,17 +113,30 @@ function wireWelcome() {
   $("wl-back").addEventListener("click", () => wlStep("intro"));
   $("wl-getkey").addEventListener("click", () => openExternal("https://openrouter.ai/keys"));
   $("wl-connect").addEventListener("click", wlConnect);
-  $("wl-finish").addEventListener("click", () => { closeWelcome(); $("url").focus(); });
+  $("wl-finish").addEventListener("click", closeWelcome);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("welcome").hidden) closeWelcome();
+  });
 }
 
 function maybeWelcome() {
-  if (!isConnected()) { wlStep("intro"); $("welcome").hidden = false; }
+  if (!isConnected()) {
+    wlStep("intro");
+    $("welcome").hidden = false;
+    trapFocus($("welcome"));
+  }
 }
 
 function wlStep(step) {
+  let shown = null;
   for (const s of document.querySelectorAll("#welcome .wl-step")) {
-    s.hidden = s.dataset.step !== step;
+    const visible = s.dataset.step === step;
+    s.hidden = !visible;
+    if (visible) shown = s;
   }
+  // Whatever held focus lived in the step that just got hidden - move it
+  // into the newly visible one instead of losing it to <body>.
+  if (shown) (focusablesIn(shown)[0] || shown).focus();
 }
 
 async function wlConnect() {
@@ -106,7 +158,10 @@ async function wlConnect() {
   }
 }
 
-function closeWelcome() { $("welcome").hidden = true; }
+function closeWelcome() {
+  $("welcome").hidden = true;
+  releaseFocus($("url"));
+}
 
 // Open an external link in the system browser (desktop) or a new tab (dev).
 function openExternal(url) {
@@ -192,6 +247,7 @@ async function openSettings() {
   }
   $("settings-msg").textContent = "";
   $("settings").hidden = false;
+  trapFocus($("settings"));
 }
 
 async function saveSettings() {
@@ -225,6 +281,7 @@ async function saveSettings() {
 function closeSettings() {
   $("settings").hidden = true;
   $("settings-body").innerHTML = "";
+  releaseFocus();
 }
 
 // ---------- navigation ----------
@@ -309,7 +366,12 @@ function showText(text) {
   pre.textContent = text;
   $("view").replaceChildren(pre);
 }
-function setEngine(msg) { $("engine").textContent = msg || ""; }
+function setEngine(msg) { $("engine").textContent = msg || ""; announce(msg); }
+// A live search run fires many trace events (one per source read, etc.) -
+// announcing every one would bury a screen-reader user in chatter. #engine
+// updates visually on each event; this aria-live region only speaks at
+// meaningful checkpoints (see watchRun).
+function announce(msg) { $("engine-announce").textContent = msg || ""; }
 
 async function openUrl() {
   const url = $("url").value.trim();
@@ -381,14 +443,23 @@ async function findPapers() {
 
 // Live trace: each SSE frame is one observable step ("Reading “X”.",
 // "Verified support for…") - shown as the current status line while it runs.
+// #engine gets every one of those (sighted users watch the detail scroll
+// by); the aria-live region only speaks once per phase change, so a
+// screen-reader user hears "reading" / "synthesizing" / "done", not a
+// blow-by-blow of every source.
 function watchRun(runId, eventsUrl, query) {
   if (state.eventSource) state.eventSource.close();
   const source = new EventSource(eventsUrl);
   state.eventSource = source;
+  let announcedPhase = null;
   source.addEventListener("trace", (e) => {
     let payload;
     try { payload = JSON.parse(e.data); } catch { return; }
-    setEngine(payload.summary || "");
+    $("engine").textContent = payload.summary || "";
+    if (payload.phase && payload.phase !== announcedPhase) {
+      announcedPhase = payload.phase;
+      announce(payload.summary || "");
+    }
     if (TERMINAL_RUN_KINDS.has(payload.kind)) finishRun(runId, query);
   });
 }

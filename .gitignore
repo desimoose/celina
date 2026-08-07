@@ -9,6 +9,14 @@ vendor/*
 workspace/*
 !workspace/.gitkeep
 
+# local session ledgers (queries, evidence, redacted traffic) are personal
+sessions/*
+!sessions/.gitkeep
+
+# local memory / skill-proposal store is personal
+memory/*
+!memory/.gitkeep
+
 # python
 __pycache__/
 *.pyc

@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Celina — a quiet research tool</title>
+<meta name="description" content="Celina looks things up without an account, so what comes back is shaped by the topic instead of your history. Everything stays on your machine." />
+<style>
+@font-face { font-family: "Manrope"; src: url("fonts/manrope-400.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Manrope"; src: url("fonts/manrope-700.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+@font-face { font-family: "Manrope"; src: url("fonts/manrope-800.woff2") format("woff2"); font-weight: 800; font-display: swap; }
+
+:root {
+  --ink: #212121; --white: #ffffff; --carbon: #000000; --cream: #fff6ec;
+  --ash: #e0e0e0; --graphite: #666666; --ember: #ee5a29; --ember-text: #c23c0f;
+  --font: "Manrope", system-ui, "Segoe UI", Roboto, sans-serif;
+  --radius: 8px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--white); color: var(--ink); font: 17px/1.6 var(--font); -webkit-font-smoothing: antialiased; }
+h1, h2 { font-weight: 800; letter-spacing: -.03em; margin: 0 0 .5em; }
+a { color: var(--ink); }
+:where(a, button):focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+.wrap { max-width: 680px; margin: 0 auto; padding: 0 24px; }
+
+.hero { background: var(--cream); padding: 72px 0 56px; text-align: center; }
+.hero img { width: 200px; height: auto; margin-bottom: 28px; }
+.hero .tagline { font-size: 15px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ember-text); margin: 0 0 14px; }
+.hero h1 { font-size: 40px; line-height: 1.15; max-width: 15ch; margin: 0 auto 20px; }
+.hero p { font-size: 18px; color: var(--graphite); max-width: 46ch; margin: 0 auto 32px; }
+
+.btn { display: inline-flex; align-items: center; gap: 10px; font: inherit; font-size: 16px; font-weight: 700;
+  padding: 14px 28px; border-radius: var(--radius); text-decoration: none; cursor: pointer; border: 0; }
+.btn--primary { background: var(--carbon); color: var(--white); }
+.btn--primary:hover { background: var(--ink); }
+.btn-note { display: block; margin-top: 14px; font-size: 13px; color: var(--graphite); }
+
+section { padding: 56px 0; border-bottom: 1px solid var(--ash); }
+section:last-of-type { border-bottom: 0; }
+section h2 { font-size: 26px; }
+section p { color: var(--ink); }
+section p.lead { color: var(--graphite); font-size: 16px; }
+
+.claim { background: var(--cream); border-radius: 12px; padding: 28px 32px; margin-top: 20px; }
+.claim p { margin: 0 0 14px; font-size: 16px; }
+.claim p:last-child { margin-bottom: 0; color: var(--graphite); font-size: 15px; }
+
+.sources { list-style: none; margin: 20px 0 0; padding: 0; display: grid; gap: 14px; }
+.sources li { padding-left: 20px; position: relative; }
+.sources li::before { content: ""; position: absolute; left: 0; top: 9px; width: 6px; height: 6px; border-radius: 50%; background: var(--ember); }
+.sources b { display: block; font-size: 15px; }
+.sources span { color: var(--graphite); font-size: 15px; }
+
+table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 15px; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--ash); }
+th { color: var(--graphite); font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: .03em; }
+
+footer { padding: 40px 0 60px; text-align: center; color: var(--graphite); font-size: 14px; }
+footer a { color: var(--graphite); text-decoration-color: var(--ash); }
+footer a:hover { color: var(--ink); }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="wrap">
+    <img src="celina.svg" alt="Celina" />
+    <p class="tagline">Goes and looks. Leaves nothing behind.</p>
+    <h1>A quiet research tool</h1>
+    <p>Celina looks things up without an account, so what comes back is shaped
+      by the topic instead of your history. Everything stays on your machine.</p>
+    <!-- TODO: replace OWNER/REPO once the GitHub repo exists -->
+    <a class="btn btn--primary" href="https://github.com/OWNER/REPO/releases/latest/download/Celina.exe">
+      Download for Windows
+    </a>
+    <span class="btn-note">Free. No account. Requires the Edge WebView2 runtime (standard on Windows 11).</span>
+  </div>
+</div>
+
+<section>
+  <div class="wrap">
+    <h2>What she does</h2>
+    <p class="lead">One search box, fanning out across sources that need no login and
+      no key, blended into one list you can actually read.</p>
+    <ul class="sources">
+      <li><b>Research</b><span>Open-access scholarly sources — OpenAlex, Europe PMC, Crossref.</span></li>
+      <li><b>Web</b><span>A resilient search chain, read privately.</span></li>
+      <li><b>Recent</b><span>Fresh news, via Google News.</span></li>
+      <li><b>Context</b><span>Wikipedia, full-text.</span></li>
+    </ul>
+    <p style="margin-top: 24px;">A grounded answer cites across the blend, checked against
+      what was actually read before it's shown to you. Read any source privately, keep what
+      matters as a clean research note. No account, no profile — the visit isn't tied to you.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>The claim, precisely</h2>
+    <p class="lead">No account. No cookies. No history shaping what comes back.</p>
+    <div class="claim">
+      <p>Celina doesn't log in as you. Sites see a visitor with no history, so
+        results aren't personalized and the visit isn't tied to your accounts.</p>
+      <p>Your IP address is not hidden. If you need that, run a VPN alongside her.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Bring your own model</h2>
+    <p class="lead">Five backends, behind one gateway. Not tied to any single vendor —
+      switch anytime in Settings. Keys stay in a file on this machine; there's no account,
+      so there's nothing for us to hand over.</p>
+    <table>
+      <tr><th>Backend</th><th>Notes</th></tr>
+      <tr><td>Anthropic</td><td>Messages API</td></tr>
+      <tr><td>OpenAI</td><td></td></tr>
+      <tr><td>OpenRouter</td><td>One key, many open-weight models</td></tr>
+      <tr><td>xAI (Grok)</td><td></td></tr>
+      <tr><td>Ollama</td><td>Local inference, fully offline, no key needed</td></tr>
+    </table>
+  </div>
+</section>
+
+<section style="border-bottom: 0;">
+  <div class="wrap" style="text-align: center;">
+    <h2>Get it</h2>
+    <!-- TODO: replace OWNER/REPO once the GitHub repo exists -->
+    <p class="lead">Windows only for now. The installer isn't code-signed yet, so Windows
+      will show a "Windows protected your PC" notice on first launch — select
+      <b>More info</b>, then <b>Run anyway</b>.</p>
+    <p style="margin-top: 24px;">
+      <a class="btn btn--primary" href="https://github.com/OWNER/REPO/releases/latest/download/Celina.exe">
+        Download for Windows
+      </a>
+    </p>
+  </div>
+</section>
+
+<footer>
+  <!-- TODO: replace OWNER/REPO once the GitHub repo exists -->
+  <p>MIT licensed. <a href="https://github.com/OWNER/REPO">Source, issues, and PRs</a>.</p>
+</footer>
+
+</body>
+</html>

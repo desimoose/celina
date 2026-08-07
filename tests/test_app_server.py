@@ -4,6 +4,7 @@ import sys
 import threading
 import unittest
 import urllib.request
+from unittest import mock
 
 SERVER = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "server"))
 if SERVER not in sys.path:
@@ -35,6 +36,26 @@ class MakeServerTest(unittest.TestCase):
                 body = json.loads(resp.read().decode("utf-8"))
                 self.assertIn("providers", body)
                 self.assertIn("tools", body)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    @mock.patch.object(app.update_check, "check")
+    def test_serves_update_check_endpoint(self, check):
+        check.return_value = {
+            "current": "0.1.0", "latest": "0.2.0",
+            "update_available": True, "url": "https://example.test/releases",
+        }
+        srv = app.make_server(port=0)
+        port = srv.server_address[1]
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/api/update-check", timeout=5
+            ) as resp:
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(json.loads(resp.read()), check.return_value)
         finally:
             srv.shutdown()
             srv.server_close()

@@ -12,6 +12,7 @@ Stdlib only. Serves the web UI and a small JSON API:
   GET  /api/search-runs/{id}          read run state
   POST /api/search-runs/{id}/stop     cooperatively stop a run
   GET  /api/search-runs/{id}/events   resumable live trace (SSE)
+  GET  /api/update-check              anonymous check against GitHub Releases
 
 Run:  python server/app.py     then open the exact loopback URL it prints
 """
@@ -39,6 +40,7 @@ import sessions  # noqa: E402
 import sse  # noqa: E402
 import tokens  # noqa: E402
 import tools  # noqa: E402
+import update_check  # noqa: E402
 
 mimetypes.add_type("font/woff2", ".woff2")  # bundled local fonts
 
@@ -303,6 +305,9 @@ class Handler(BaseHTTPRequestHandler):
                 "providers": gateway.available(),
                 "tools": tools.status(),
             })
+
+        if route == "/api/update-check":
+            return self._send(200, update_check.check())
 
         if route == "/api/workspace":
             return self._send(200, {"files": self._list_workspace()})

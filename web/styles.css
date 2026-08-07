@@ -109,6 +109,16 @@ h1, h2 { font-weight: 800; letter-spacing: -.03em; }
 .gear:hover { background: rgba(33,33,33,.05); color: var(--ink); }
 .gear svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; flex: 0 0 auto; }
 
+/* Quiet, non-dismissible - it just stops appearing once you're current. */
+.update-link {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 10px;
+  color: var(--graphite); text-decoration: none; font: inherit; font-size: 12px; font-weight: 600;
+  border-radius: var(--radius);
+}
+.update-link:hover { background: rgba(33,33,33,.05); color: var(--ink); }
+.update-link[hidden] { display: none; }
+.update-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ember); flex: 0 0 auto; }
+
 /* ---------- stage / surfaces ---------- */
 .stage { min-width: 0; overflow: hidden; position: relative; background: var(--white); }
 .surface { height: 100%; display: flex; flex-direction: column; min-height: 0; }

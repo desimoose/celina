@@ -24,7 +24,7 @@ datas += [
 hiddenimports = [
     "finder", "gateway", "tools", "pdf", "paths", "app", "scanner",
     "sessions", "events", "redaction", "tokens", "traffic", "evidence",
-    "orchestrator", "verification", "memory",
+    "orchestrator", "verification", "memory", "update_check",
 ]
 
 # pywebview + its .NET bridge need their data/binaries/submodules collected.

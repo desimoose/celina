@@ -15,6 +15,11 @@ import re
 import sys
 
 APP_NAME = "Celina"
+APP_VERSION = "0.1.0"
+# TODO: set to the real "owner/repo" once the GitHub repo exists. Used only
+# by the anonymous update check (server/update_check.py) and the landing
+# page's download link - nothing else depends on it.
+GITHUB_REPO = "OWNER/REPO"
 
 
 def is_frozen():

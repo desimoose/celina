@@ -74,6 +74,20 @@ async function boot() {
   wireSettings();
   wireWelcome();
   maybeWelcome();
+  checkForUpdate();  // fire-and-forget - never blocks or delays boot
+}
+
+// Anonymous, best-effort. A failed check is not an error the user needs to
+// see - it just quietly doesn't mention an update this launch.
+async function checkForUpdate() {
+  try {
+    const data = await fetch("/api/update-check").then((r) => r.json());
+    if (data.update_available && data.url) {
+      const link = $("update-link");
+      link.href = data.url;
+      link.hidden = false;
+    }
+  } catch { /* quiet */ }
 }
 
 async function refreshConfig() {

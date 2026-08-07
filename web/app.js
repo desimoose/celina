@@ -15,6 +15,8 @@ const state = {
   sessionId: null,      // local research session (created on first search)
   activeRunId: null,    // the bounded search run currently streaming
   eventSource: null,    // its live trace connection
+  voiceRecognition: null,
+  mascot: { notices: [], unread: 0, panelOpen: false },
 };
 
 const TERMINAL_RUN_KINDS = new Set([
@@ -86,6 +88,7 @@ async function checkForUpdate() {
       const link = $("update-link");
       link.href = data.url;
       link.hidden = false;
+      addMascotNotice("Update available", "A newer version of Celina is ready.", "attention");
     }
   } catch { /* quiet */ }
 }
@@ -387,9 +390,87 @@ function setEngine(msg) { $("engine").textContent = msg || ""; announce(msg); }
 // meaningful checkpoints (see watchRun).
 function announce(msg) { $("engine-announce").textContent = msg || ""; }
 
+// ---------- companion state + quick panel ----------
+
+function setMascotState(kind) {
+  const mascot = $("mascot");
+  if (mascot) mascot.dataset.state = kind;
+}
+
+function noticeTime(date) {
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function renderMascotPanel() {
+  const list = $("mascot-notices");
+  if (!list) return;
+  list.replaceChildren();
+  if (!state.mascot.notices.length) {
+    const empty = document.createElement("li");
+    empty.className = "mascot-notice-body";
+    empty.textContent = "No new notices.";
+    list.appendChild(empty);
+  } else {
+    state.mascot.notices.forEach((notice) => {
+      const item = document.createElement("li");
+      item.innerHTML = `<span class="mascot-notice-title">${escapeHtml(notice.title)}</span>`
+        + `<span class="mascot-notice-body">${escapeHtml(notice.body)}</span>`
+        + `<span class="mascot-notice-time">${noticeTime(notice.at)}</span>`;
+      list.appendChild(item);
+    });
+  }
+  const bell = $("mascot-notify");
+  if (state.mascot.unread) bell.dataset.unread = String(state.mascot.unread);
+  else delete bell.dataset.unread;
+  $("mascot-panel-summary").textContent = state.mascot.unread
+    ? `${state.mascot.unread} new notice${state.mascot.unread === 1 ? "" : "s"}`
+    : "Quiet here.";
+  const enable = $("mascot-enable-notify");
+  if (!("Notification" in window)) {
+    enable.disabled = true;
+    enable.textContent = "Notifications unavailable";
+  } else if (Notification.permission === "granted") {
+    enable.disabled = false;
+    enable.textContent = "Notifications on";
+  } else if (Notification.permission === "denied") {
+    enable.disabled = true;
+    enable.textContent = "Notifications blocked";
+  } else {
+    enable.disabled = false;
+    enable.textContent = "Enable notifications";
+  }
+}
+
+function addMascotNotice(title, body, kind = "active") {
+  state.mascot.notices.unshift({ title, body, at: new Date() });
+  state.mascot.notices = state.mascot.notices.slice(0, 5);
+  state.mascot.unread = state.mascot.panelOpen ? 0 : state.mascot.unread + 1;
+  setMascotState(kind);
+  renderMascotPanel();
+}
+
+function openMascotPanel() {
+  state.mascot.panelOpen = true;
+  state.mascot.unread = 0;
+  $("mascot-panel").hidden = false;
+  $("mascot").classList.add("is-panel-open");
+  $("mascot-notify").setAttribute("aria-expanded", "true");
+  renderMascotPanel();
+  setMascotState("resting");
+}
+
+function closeMascotPanel() {
+  state.mascot.panelOpen = false;
+  $("mascot-panel").hidden = true;
+  $("mascot").classList.remove("is-panel-open");
+  $("mascot-notify").setAttribute("aria-expanded", "false");
+  renderMascotPanel();
+}
+
 async function openUrl() {
   const url = $("url").value.trim();
   if (!url) return;
+  setMascotState("resting");
   setEngine("fetching…");
   $("go").disabled = true;
   try {
@@ -397,15 +478,21 @@ async function openUrl() {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ url }),
     }).then((r) => r.json());
-    if (data.error) { setEngine("failed: " + data.error); return; }
+    if (data.error) {
+      setEngine("failed: " + data.error);
+      addMascotNotice("Reading needs attention", data.error, "attention");
+      return;
+    }
     state.viewing = { title: data.url, text: data.text };
     state.activeFile = null;
     state.results = null;
     showText(data.text);
     setEngine("Read privately" + (data.note ? " · " + data.note : ""));
     $("save").disabled = false;
+    notifyWhenReady("Reading ready", "Celina has the page open.");
   } catch (e) {
     setEngine("failed: " + e.message);
+    addMascotNotice("Reading needs attention", e.message, "attention");
   } finally {
     $("go").disabled = false;
   }
@@ -441,6 +528,7 @@ async function findPapers() {
   if (!q) return;
   if (looksLikeUrl(q)) return openUrl();
   if (state.activeRunId) return;   // one bounded run at a time
+  setMascotState("resting");
   setEngine("Finding real sources…");
   $("find").disabled = true;
   $("stop").hidden = false;
@@ -450,6 +538,7 @@ async function findPapers() {
     watchRun(started.run_id, started.events_url, q);
   } catch (e) {
     setEngine("search failed: " + e.message);
+    addMascotNotice("Search needs attention", e.message, "attention");
     $("find").disabled = false;
     $("stop").hidden = true;
   }
@@ -499,6 +588,7 @@ async function finishRun(runId, query) {
     renderRun(run, query);
   } catch (e) {
     setEngine("search failed: " + e.message);
+    addMascotNotice("Search needs attention", e.message, "attention");
   }
 }
 
@@ -527,6 +617,7 @@ function renderRun(run, query) {
   renderResults(data);
   const n = data.results.length;
   setEngine(`${n} source${n === 1 ? "" : "s"} found`);
+  notifyWhenReady(`${n} source${n === 1 ? "" : "s"} found`, "Celina finished looking.", run.state === "completed" ? "active" : "attention");
 }
 
 function renderResults(data) {
@@ -635,7 +726,13 @@ async function saveCurrent() {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ path: `${stamp}-${slugify(title)}.md`, content }),
   }).then((r) => r.json());
-  setEngine(res.error ? "Could not keep it: " + res.error : "Kept — find it in Library");
+  if (res.error) {
+    setEngine("Could not keep it: " + res.error);
+    addMascotNotice("Could not save", res.error, "attention");
+  } else {
+    setEngine("Kept — find it in Library");
+    notifyWhenReady("Saved to Library", "The note is ready in your Library.");
+  }
   $("save").disabled = true;
   loadFiles();
 }
@@ -667,7 +764,11 @@ async function send(e) {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ provider: state.provider, messages: state.history, context: contextText() }),
     }).then((r) => r.json());
-    if (res.error) { pending.remove(); addMessage("err", res.error); state.history.pop(); return; }
+    if (res.error) {
+      pending.remove(); addMessage("err", res.error); state.history.pop();
+      addMascotNotice("Assistant needs attention", res.error, "attention");
+      return;
+    }
     pending.remove();
     addMessage("bot", res.text);
     state.history.push({ role: "assistant", content: res.text });
@@ -675,8 +776,79 @@ async function send(e) {
     $("usage").textContent = `${res.provider} · ${res.model}` + (u.input_tokens ? ` · ${u.input_tokens} in / ${u.output_tokens} out` : "");
   } catch (err) {
     pending.remove(); addMessage("err", err.message); state.history.pop();
+    addMascotNotice("Assistant needs attention", err.message, "attention");
   } finally {
     $("send").disabled = false;
+  }
+}
+
+// ---------- companion tools ----------
+
+async function enableNotifications() {
+  if (!("Notification" in window)) {
+    setEngine("Notifications are not available here");
+    renderMascotPanel();
+    return;
+  }
+  let permission = Notification.permission;
+  if (permission === "default") permission = await Notification.requestPermission();
+  setEngine(permission === "granted" ? "Notifications on" : "Notifications remain quiet");
+  renderMascotPanel();
+}
+
+function notifyWhenReady(title, body, kind = "active") {
+  addMascotNotice(title, body, kind);
+  if ("Notification" in window && Notification.permission === "granted") {
+    try { new Notification(title, { body }); } catch { /* in-app notice still works */ }
+  }
+}
+
+function toggleVoiceInput() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const button = $("mascot-voice");
+  if (!SpeechRecognition) {
+    setEngine("Voice input is not available here");
+    return;
+  }
+  if (state.voiceRecognition) {
+    state.voiceRecognition.stop();
+    return;
+  }
+  const recognition = new SpeechRecognition();
+  state.voiceRecognition = recognition;
+  recognition.lang = navigator.language || "en-US";
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  recognition.onstart = () => {
+    button.classList.add("is-listening");
+    button.setAttribute("aria-pressed", "true");
+    button.setAttribute("aria-label", "Stop voice input");
+    setEngine("Listening…");
+  };
+  recognition.onresult = (event) => {
+    const transcript = event.results[0][0].transcript.trim();
+    if (transcript) {
+      $("url").value = transcript;
+      $("url").focus();
+      setEngine("Voice input ready");
+    }
+  };
+  recognition.onerror = (event) => {
+    setEngine(event.error === "not-allowed" ? "Microphone permission denied" : "Voice input failed");
+  };
+  recognition.onend = () => {
+    state.voiceRecognition = null;
+    button.classList.remove("is-listening");
+    button.removeAttribute("aria-pressed");
+    button.setAttribute("aria-label", "Use voice input");
+  };
+  try {
+    recognition.start();
+  } catch {
+    state.voiceRecognition = null;
+    button.classList.remove("is-listening");
+    button.removeAttribute("aria-pressed");
+    setEngine("Voice input could not start");
   }
 }
 
@@ -692,5 +864,14 @@ $("refresh").onclick = loadFiles;
 $("composer").addEventListener("submit", send);
 $("clear").onclick = () => { state.history = []; $("log").innerHTML = ""; $("usage").textContent = ""; };
 $("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("composer").requestSubmit(); });
+$("mascot-notify").onclick = openMascotPanel;
+$("mascot-panel-close").onclick = closeMascotPanel;
+$("mascot-enable-notify").onclick = enableNotifications;
+$("mascot-voice").onclick = toggleVoiceInput;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.mascot.panelOpen) closeMascotPanel(); });
+document.addEventListener("click", (e) => {
+  if (state.mascot.panelOpen && !$("mascot").contains(e.target)) closeMascotPanel();
+});
+renderMascotPanel();
 
 boot();

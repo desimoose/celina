@@ -40,6 +40,34 @@
   <!-- stage: one surface visible at a time -->
   <main class="stage">
 
+    <!-- quiet companion: decorative, present without competing with the work -->
+    <div class="mascot" id="mascot" data-state="resting">
+      <div class="mascot-tools" role="group" aria-label="Celina tools">
+        <button class="mascot-tool" id="mascot-notify" type="button"
+                aria-label="Open quick panel" aria-expanded="false" title="Open quick panel">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+        </button>
+        <button class="mascot-tool" id="mascot-voice" type="button"
+                aria-label="Use voice input" title="Use voice input">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"/></svg>
+        </button>
+      </div>
+      <div class="mascot-rest">
+        <span class="mascot-label">Celina rests here</span>
+        <img class="mascot-image mascot-image--resting" src="/assets/celina-pet-resting.png" alt="" />
+        <img class="mascot-image mascot-image--active" src="/assets/celina-pet.png" alt="" />
+      </div>
+      <section class="mascot-panel" id="mascot-panel" hidden aria-label="Celina quick panel">
+        <header class="mascot-panel-head">
+          <span>Quick panel</span>
+          <button class="mascot-panel-close" id="mascot-panel-close" type="button" aria-label="Close quick panel">&times;</button>
+        </header>
+        <p class="mascot-panel-summary" id="mascot-panel-summary">Quiet here.</p>
+        <ul class="mascot-notices" id="mascot-notices" aria-live="polite"></ul>
+        <button class="mascot-panel-action" id="mascot-enable-notify" type="button">Enable notifications</button>
+      </section>
+    </div>
+
     <!-- Search + reader -->
     <section class="surface" id="s-work" aria-label="Search and read">
       <div class="toolbar">

@@ -90,6 +90,11 @@
           <input id="incognito-toggle" type="checkbox" />
           <span>Incognito</span>
         </label>
+        <div class="session-privacy" aria-label="Current session privacy">
+          <span class="session-badge" id="session-badge">Auto-delete after 24 hours</span>
+          <span class="session-state" id="session-state">Current session: not started</span>
+          <button id="session-delete" class="btn btn--ghost session-delete" type="button" data-tooltip="Delete current session">Delete current session</button>
+        </div>
         <div class="status" id="engine"></div>
         <div id="engine-announce" class="sr-only" aria-live="polite" aria-atomic="true"></div>
       </div>
@@ -167,7 +172,17 @@
             <label><span>Kind <em>optional</em></span><input id="source-kind" maxlength="64" placeholder="paper, book, lecture…" /></label>
             <div class="notebook-form-actions"><button id="source-cancel" class="btn btn--ghost" type="button">Cancel</button><button class="btn btn--primary" type="submit">Add source</button></div>
           </form>
-          <button id="source-new" class="notebook-add" type="button" hidden>+ Add source</button>
+          <form id="notebook-import-form" class="notebook-form" hidden>
+            <label><span>Import URL or PDF</span><input id="import-url" maxlength="2048" type="url" placeholder="https://example.org/paper.pdf" required /></label>
+            <label><span>Title <em>optional</em></span><input id="import-title" maxlength="160" placeholder="Use a clearer title if you want" /></label>
+            <label><span>Kind <em>optional</em></span><input id="import-kind" maxlength="64" placeholder="paper, report, syllabus…" /></label>
+            <div id="notebook-import-status" class="notebook-form-status" aria-live="polite"></div>
+            <div class="notebook-form-actions"><button id="import-cancel" class="btn btn--ghost" type="button">Cancel</button><button id="import-submit" class="btn btn--primary" type="submit">Import</button></div>
+          </form>
+          <div class="notebook-source-actions">
+            <button id="source-new" class="notebook-add" type="button" hidden>+ Add source</button>
+            <button id="source-import-new" class="notebook-add" type="button" hidden>+ Import URL / PDF</button>
+          </div>
         </aside>
 
         <div class="notebook-main" id="notebook-main">
@@ -181,6 +196,7 @@
             <div class="notebook-evidence-head"><div><span class="eyebrow">Selected evidence</span><h3 id="notebook-evidence-title">Select a source</h3></div><a id="notebook-evidence-link" href="#" target="_blank" rel="noopener" hidden>Open source ↗</a></div>
             <p id="notebook-evidence-meta" class="notebook-evidence-meta"></p>
             <blockquote id="notebook-evidence-excerpt"></blockquote>
+            <div id="notebook-evidence-citations" class="notebook-evidence-citations" hidden></div>
           </article>
           <section id="notebook-notes" class="notebook-notes" hidden aria-label="Saved notes">
             <div class="notebook-section-head"><div><span class="eyebrow">Working notes</span><h3>What you are keeping</h3></div><button id="note-new" class="notebook-add" type="button">+ Add note</button></div>
@@ -254,6 +270,7 @@
                 placeholder="Ask about what you're reading"></textarea>
       <button id="send" class="btn btn--primary" data-tooltip="Ask about the current sources">Send</button>
     </form>
+    <div class="composer-disclosure" id="composer-privacy">Ollama — stays on this machine</div>
     <div class="usage" id="usage"></div>
   </aside>
 
@@ -299,11 +316,11 @@
 </div>
 
 <div class="modal" id="settings" hidden>
-  <div class="modal-card" role="dialog" aria-modal="true" aria-label="Settings">
-    <header class="modal-head">
-      <h2>Settings</h2>
-      <button class="modal-x" id="settings-close" aria-label="Close">&times;</button>
-    </header>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Settings">
+      <header class="modal-head">
+        <h2>Settings</h2>
+        <button class="modal-x" id="settings-close" aria-label="Close">&times;</button>
+      </header>
     <div class="modal-body" id="settings-body"></div>
     <footer class="modal-foot">
       <span class="modal-msg" id="settings-msg" aria-live="polite"></span>
@@ -329,6 +346,7 @@
   </div>
 </div>
 
+<script src="/search_capture.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

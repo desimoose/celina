@@ -116,8 +116,13 @@ class SessionStore:
                 sessions.append(item)
         return sessions
 
-    def cleanup(self, retention_seconds=86400, now=None):
-        """Delete expired stopped sessions and all sessions marked incognito."""
+    def cleanup(
+        self,
+        retention_seconds=86400,
+        now=None,
+        include_active_incognito=False,
+    ):
+        """Delete expired stopped sessions and orphaned/stopped incognito sessions."""
         if not isinstance(retention_seconds, (int, float)) or retention_seconds < 0:
             raise ValueError("retention_seconds must be non-negative")
         current = now or datetime.now(timezone.utc)
@@ -127,7 +132,7 @@ class SessionStore:
         for item in self.list():
             expired = False
             if item.incognito:
-                expired = True
+                expired = include_active_incognito or item.state in {"stopped", "ending"}
             elif item.state in {"stopped", "ending"}:
                 try:
                     last_active = datetime.fromisoformat(

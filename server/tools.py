@@ -15,7 +15,9 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
+from types import SimpleNamespace
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -88,6 +90,60 @@ _BLANKS = re.compile(r"\n{3,}")
 # that puts every page's text in the DOM (missed by _looks_like_pdf_url, or
 # any other DOM oddity) can otherwise return megabytes uncapped.
 _MAX_FETCHED_TEXT_CHARS = 600_000
+_MAX_FETCHED_BYTES = 8_000_000
+
+
+def _bounded_bytes(body):
+    if len(body) > _MAX_FETCHED_BYTES:
+        raise RuntimeError("fetched document is too large")
+    return body
+
+
+def _run_bounded_process(args, timeout):
+    """Run a byte-producing helper without buffering an unbounded stdout."""
+    child = subprocess.Popen(
+        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    stdout = bytearray()
+    stderr = bytearray()
+
+    def drain(stream, target, limit):
+        while len(target) <= limit:
+            chunk = stream.read(min(64 * 1024, limit + 1 - len(target)))
+            if not chunk:
+                break
+            target.extend(chunk)
+
+    out_thread = threading.Thread(
+        target=drain, args=(child.stdout, stdout, _MAX_FETCHED_BYTES), daemon=True
+    )
+    err_thread = threading.Thread(
+        target=drain, args=(child.stderr, stderr, 64 * 1024), daemon=True
+    )
+    out_thread.start()
+    err_thread.start()
+    deadline = time.monotonic() + timeout
+    while out_thread.is_alive() or err_thread.is_alive():
+        if len(stdout) > _MAX_FETCHED_BYTES:
+            child.kill()
+            break
+        if time.monotonic() >= deadline:
+            child.kill()
+            out_thread.join(1)
+            err_thread.join(1)
+            child.wait()
+            raise subprocess.TimeoutExpired(args, timeout, output=bytes(stdout), stderr=bytes(stderr))
+        time.sleep(0.01)
+    child.wait()
+    out_thread.join(1)
+    err_thread.join(1)
+    if len(stdout) > _MAX_FETCHED_BYTES:
+        raise RuntimeError("fetched document is too large")
+    return SimpleNamespace(
+        returncode=child.returncode,
+        stdout=bytes(stdout),
+        stderr=bytes(stderr),
+    )
 
 
 def _cap_fetched_text(text):
@@ -116,9 +172,10 @@ def _fetch_plain(url, traffic_context=None):
             timeout=45,
             action_type="page.fetch",
         )
-        return _PageResponse(result.body, _content_type(result.headers))
+        return _PageResponse(_bounded_bytes(result.body), _content_type(result.headers))
     with urllib.request.urlopen(req, timeout=45) as resp:
-        return _PageResponse(resp.read(), _content_type(resp.headers))
+        body = resp.read(_MAX_FETCHED_BYTES + 1)
+        return _PageResponse(_bounded_bytes(body), _content_type(resp.headers))
 
 
 def _content_type(headers):
@@ -138,13 +195,28 @@ def _decode_page_body(body, content_type):
     return body.decode(charset, "replace")
 
 
+def _pdf_payload_from_bytes(data):
+    data = _bounded_bytes(data)
+    text, backend = pdf.extract_text(
+        data, max_pages=50, max_chars_per_page=2000
+    )
+    payload = {"text": text, "backend": backend}
+    pages = pdf.extract_pages(data)
+    if pages:
+        payload["pages"] = pages
+    return payload
+
+
 def _plain_page(url, traffic_context=None, note=None):
     response = _fetch_plain(url, traffic_context)
     media_type = _media_type(response.content_type)
     if media_type == "application/pdf":
         if not pdf.looks_like_pdf(response.body):
             raise RuntimeError("response declared PDF but did not contain a PDF")
-        text, backend = pdf.extract_text(response.body)
+        pages = pdf.extract_pages(response.body)
+        text, backend = pdf.extract_text(
+            response.body, max_pages=50, max_chars_per_page=2000
+        )
         result = {
             "url": url,
             "engine": "plain-pdf",
@@ -152,6 +224,8 @@ def _plain_page(url, traffic_context=None, note=None):
             "text": text,
             "content_type": "application/pdf",
         }
+        if pages:
+            result["pages"] = pages
     else:
         textual_types = {
             "application/json",
@@ -400,6 +474,90 @@ def _fetch_obscura_pdf(binary, url, timeout=40, traffic_context=None):
     return pdf.extract_text(data)  # (text, backend); raises if unreadable
 
 
+def _fetch_obscura_pdf_payload(binary, url, timeout=40, traffic_context=None):
+    if (
+        traffic_context is not None
+        and traffic_context.cancellation is not None
+        and traffic_context.cancellation.is_set()
+    ):
+        raise traffic.TrafficCancelled("page read cancelled before it started")
+    traffic_event_id = None
+    request_redactions = ()
+    started = time.monotonic()
+    if traffic_context is not None:
+        traffic_event_id, request_redactions = (
+            traffic_context.recorder.start_process(
+                traffic_context,
+                url,
+                "page.fetch",
+                {
+                    "tool": "obscura",
+                    "dump": "original",
+                    "stealth": False,
+                    "timeout_seconds": timeout,
+                },
+            )
+        )
+    try:
+        proc = _run_bounded_process(
+            [binary, "fetch", "--dump", "original", "--timeout", str(timeout), url],
+            timeout + 40,
+        )
+    except subprocess.TimeoutExpired as error:
+        if traffic_context is not None:
+            detail = error.stderr or b"obscura timed out"
+            if isinstance(detail, str):
+                detail = detail.encode("utf-8")
+            traffic_context.recorder.complete_process(
+                traffic_context,
+                traffic_event_id,
+                started,
+                None,
+                detail,
+                request_redactions,
+                "obscura timed out",
+            )
+        raise
+    except OSError:
+        if traffic_context is not None:
+            traffic_context.recorder.complete_process(
+                traffic_context,
+                traffic_event_id,
+                started,
+                None,
+                b"",
+                request_redactions,
+                "obscura process failed",
+            )
+        raise
+    if proc.returncode != 0:
+        msg = proc.stderr.decode("utf-8", "replace").strip()[:300]
+        if traffic_context is not None:
+            traffic_context.recorder.complete_process(
+                traffic_context,
+                traffic_event_id,
+                started,
+                proc.returncode,
+                proc.stderr or b"",
+                request_redactions,
+                msg or "obscura exited non-zero",
+            )
+        raise RuntimeError(msg or "obscura exited non-zero")
+    data = _bounded_bytes(proc.stdout)
+    if traffic_context is not None:
+        traffic_context.recorder.complete_process(
+            traffic_context,
+            traffic_event_id,
+            started,
+            proc.returncode,
+            data,
+            request_redactions,
+        )
+    if not pdf.looks_like_pdf(data):
+        raise RuntimeError("not a PDF")
+    return _pdf_payload_from_bytes(data)
+
+
 def fetch(url, traffic_context=None):
     """Fetch a page, preferring Obscura when it is available.
 
@@ -421,7 +579,7 @@ def fetch(url, traffic_context=None):
         # spinning the browser only to have it hang on a non-HTML resource.
         if _looks_like_pdf_url(url):
             try:
-                text, backend = _fetch_obscura_pdf(
+                pdf_payload = _fetch_obscura_pdf_payload(
                     binary,
                     url,
                     traffic_context=traffic_context,
@@ -430,8 +588,9 @@ def fetch(url, traffic_context=None):
                     "url": url,
                     "engine": "obscura-pdf",
                     "content_type": "application/pdf",
-                    "note": f"pdf · {backend}",
-                    "text": text,
+                    "note": f"pdf · {pdf_payload['backend']}",
+                    "text": pdf_payload["text"],
+                    "pages": pdf_payload.get("pages") or [],
                 }
             except traffic.TrafficCancelled:
                 raise
@@ -459,7 +618,7 @@ def fetch(url, traffic_context=None):
             # An unmarked PDF (e.g. arXiv links carry no .pdf suffix) lands here
             # as empty text - try the byte path before giving up.
             try:
-                text, backend = _fetch_obscura_pdf(
+                pdf_payload = _fetch_obscura_pdf_payload(
                     binary,
                     url,
                     traffic_context=traffic_context,
@@ -468,8 +627,9 @@ def fetch(url, traffic_context=None):
                     "url": url,
                     "engine": "obscura-pdf",
                     "content_type": "application/pdf",
-                    "note": f"pdf · {backend}",
-                    "text": text,
+                    "note": f"pdf · {pdf_payload['backend']}",
+                    "text": pdf_payload["text"],
+                    "pages": pdf_payload.get("pages") or [],
                 }
             except Exception:
                 pass

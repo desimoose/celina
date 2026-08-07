@@ -108,6 +108,172 @@ class NotebooksTest(unittest.TestCase):
                 notebook["id"], {"title": "Unsafe", "url": "javascript:alert(1)", "excerpt": "Text"}
             )
 
+    def test_add_source_preserves_search_capture_metadata(self):
+        notebook = self.notebooks.create_notebook("Search captures")
+
+        source = self.notebooks.add_source(
+            notebook["id"],
+            {
+                "title": "Controlled trial",
+                "url": "https://example.test/trial",
+                "kind": "research",
+                "excerpt": "Search excerpt:\nEvening caffeine delayed sleep onset.",
+                "origin": "search",
+                "source_result": {
+                    "title": "Controlled trial",
+                    "url": "https://example.test/trial",
+                    "kind": "research",
+                },
+            },
+        )
+
+        self.assertEqual(source["origin"], "search")
+        self.assertEqual(
+            source["source_result"],
+            {
+                "title": "Controlled trial",
+                "url": "https://example.test/trial",
+                "kind": "research",
+            },
+        )
+
+    def test_add_source_rejects_unsafe_search_result_urls(self):
+        notebook = self.notebooks.create_notebook("Search capture URL safety")
+
+        with self.assertRaisesRegex(ValueError, "http or https"):
+            self.notebooks.add_source(
+                notebook["id"],
+                {
+                    "title": "Unsafe result",
+                    "url": "https://example.test/trial",
+                    "excerpt": "Search excerpt:\nUnsafe source metadata.",
+                    "origin": "search",
+                    "source_result": {
+                        "title": "Unsafe result",
+                        "url": "javascript:alert(1)",
+                        "kind": "research",
+                    },
+                },
+            )
+
+    def test_import_source_from_web_page_uses_document_citation_and_bounded_excerpt(self):
+        notebook = self.notebooks.create_notebook("Import web")
+
+        source = self.notebooks.import_source(
+            notebook["id"],
+            {"url": "https://example.com/article", "title": "Article import", "kind": "paper"},
+            {
+                "url": "https://example.com/article",
+                "content_type": "text/html; charset=utf-8",
+                "engine": "plain",
+                "text": "A" * 9000,
+            },
+        )
+
+        self.assertEqual(source["origin"], "import")
+        self.assertEqual(source["content_type"], "text/html; charset=utf-8")
+        self.assertEqual(source["engine"], "plain")
+        self.assertLessEqual(len(source["excerpt"]), self.notebooks._EXCERPT_LIMIT)
+        self.assertEqual(
+            source["citations"],
+            [
+                {
+                    "id": "source-1-doc",
+                    "label": "document",
+                    "text": "A" * self.notebooks._IMPORT_CITATION_TEXT_LIMIT,
+                }
+            ],
+        )
+
+    def test_import_source_from_pdf_pages_caps_pages_and_page_lengths(self):
+        notebook = self.notebooks.create_notebook("Import PDF")
+
+        source = self.notebooks.import_source(
+            notebook["id"],
+            {"url": "https://example.com/paper.pdf", "title": "", "kind": "paper"},
+            {
+                "url": "https://example.com/paper.pdf",
+                "content_type": "application/pdf",
+                "engine": "obscura-pdf",
+                "text": "full document text",
+                "pages": [
+                    {"page": number, "text": f"page-{number}-" + ("x" * 2500)}
+                    for number in range(1, 61)
+                ],
+            },
+        )
+
+        self.assertEqual(source["origin"], "import")
+        self.assertEqual(source["content_type"], "application/pdf")
+        self.assertEqual(source["engine"], "obscura-pdf")
+        self.assertEqual(len(source["citations"]), self.notebooks._IMPORT_PAGE_LIMIT)
+        self.assertEqual(source["citations"][0]["label"], "p. 1")
+        self.assertEqual(source["citations"][0]["page"], 1)
+        self.assertLessEqual(
+            len(source["citations"][0]["text"]),
+            self.notebooks._IMPORT_CITATION_TEXT_LIMIT,
+        )
+        self.assertEqual(
+            source["citations"][-1]["page"],
+            self.notebooks._IMPORT_PAGE_LIMIT,
+        )
+        self.assertLessEqual(len(source["excerpt"]), self.notebooks._EXCERPT_LIMIT)
+
+    def test_import_source_falls_back_to_document_citation_without_pages(self):
+        notebook = self.notebooks.create_notebook("Import fallback")
+
+        source = self.notebooks.import_source(
+            notebook["id"],
+            {"url": "https://example.com/fallback.pdf", "title": "Fallback", "kind": "paper"},
+            {
+                "url": "https://example.com/fallback.pdf",
+                "content_type": "application/pdf",
+                "engine": "obscura-pdf",
+                "text": "Readable PDF text without page extraction.",
+                "pages": [],
+            },
+        )
+
+        self.assertEqual(
+            source["citations"],
+            [
+                {
+                    "id": "source-1-doc",
+                    "label": "document",
+                    "text": "Readable PDF text without page extraction.",
+                }
+            ],
+        )
+
+    def test_tutor_context_uses_bounded_citation_labels(self):
+        notebook = self.notebooks.create_notebook(
+            "Tutor context",
+            goal="Understand the paper",
+        )
+        self.notebooks.import_source(
+            notebook["id"],
+            {"url": "https://example.com/paper.pdf", "title": "Citation rich", "kind": "paper"},
+            {
+                "url": "https://example.com/paper.pdf",
+                "content_type": "application/pdf",
+                "engine": "obscura-pdf",
+                "text": "full document text " * 800,
+                "pages": [
+                    {"page": 1, "text": "Intro " * 800},
+                    {"page": 2, "text": "Methods " * 800},
+                ],
+            },
+        )
+
+        context = self.notebooks.build_tutor_context("tutor-context")
+
+        self.assertIn("Notebook: Tutor context", context)
+        self.assertIn("Source 1: Citation rich", context)
+        self.assertIn("p. 1:", context)
+        self.assertIn("p. 2:", context)
+        self.assertLessEqual(len(context), self.notebooks._TUTOR_CONTEXT_LIMIT)
+        self.assertNotIn("full document text full document text full document text", context)
+
     def test_store_uses_workspace_notebooks_files(self):
         notebook = self.notebooks.create_notebook("My notebook")
         target = os.path.join(self.data_root, "workspace", "notebooks", f"{notebook['id']}.json")

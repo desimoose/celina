@@ -22,7 +22,7 @@ def looks_like_pdf(data):
 
 # --- optional upgrade: pypdf / PyPDF2 ------------------------------------
 
-def _extract_pypdf(data):
+def _extract_pypdf(data, max_pages=None, max_chars_per_page=None):
     try:
         import pypdf as backend
     except ImportError:
@@ -32,10 +32,39 @@ def _extract_pypdf(data):
             return None
     try:
         reader = backend.PdfReader(io.BytesIO(data))
-        parts = [(page.extract_text() or "") for page in reader.pages]
+        pages = reader.pages if max_pages is None else reader.pages[:max_pages]
+        parts = []
+        for page in pages:
+            text = page.extract_text() or ""
+            if max_chars_per_page is not None:
+                text = text[:max_chars_per_page]
+            parts.append(text)
         return "\n\n".join(parts).strip()
     except Exception:
         return None  # fall through to the stdlib extractor
+
+
+def extract_pages(data, max_pages=50, max_chars_per_page=2000):
+    try:
+        import pypdf as backend
+    except ImportError:
+        try:
+            import PyPDF2 as backend
+        except ImportError:
+            return []
+    try:
+        reader = backend.PdfReader(io.BytesIO(data))
+        pages = []
+        for index, page in enumerate(reader.pages[:max_pages], start=1):
+            text = (page.extract_text() or "").strip()
+            if not text:
+                continue
+            if len(text) > max_chars_per_page:
+                text = text[:max_chars_per_page].rstrip()
+            pages.append({"page": index, "text": text})
+        return pages
+    except Exception:
+        return []
 
 
 # --- stdlib fallback ------------------------------------------------------
@@ -163,10 +192,10 @@ def _extract_stdlib(data):
 
 # --- public ---------------------------------------------------------------
 
-def extract_text(data):
+def extract_text(data, max_pages=None, max_chars_per_page=None):
     """Return (text, backend). backend is 'pypdf' or 'stdlib'. Raises if the
     PDF yields nothing readable (scanned image, or a font we can't map)."""
-    via_pypdf = _extract_pypdf(data)
+    via_pypdf = _extract_pypdf(data, max_pages, max_chars_per_page)
     if via_pypdf and len(via_pypdf) > 40:
         return via_pypdf, "pypdf"
 

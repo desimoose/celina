@@ -59,7 +59,7 @@ class SessionStoreTest(unittest.TestCase):
         reopened = sessions.SessionStore(self.temp.name).get(created.session_id)
         self.assertTrue(reopened.incognito)
 
-    def test_cleanup_deletes_expired_and_incognito_sessions(self):
+    def test_cleanup_deletes_expired_and_stopped_incognito_sessions(self):
         old = self.store.create()
         self.store.mark_stopped(old.session_id)
         connection = sqlite3.connect(os.path.join(self.temp.name, old.session_id, "ledger.sqlite3"))
@@ -74,12 +74,26 @@ class SessionStoreTest(unittest.TestCase):
         recent = self.store.create()
         self.store.mark_stopped(recent.session_id)
         incognito = self.store.create(incognito=True)
+        stopped_incognito = self.store.create(incognito=True)
+        self.store.mark_stopped(stopped_incognito.session_id)
 
         removed = self.store.cleanup(retention_seconds=3600)
 
-        self.assertEqual(set(removed), {old.session_id, incognito.session_id})
+        self.assertEqual(set(removed), {old.session_id, stopped_incognito.session_id})
         self.assertIsNone(self.store.get(old.session_id))
         self.assertIsNotNone(self.store.get(recent.session_id))
+        self.assertIsNotNone(self.store.get(incognito.session_id))
+        self.assertIsNone(self.store.get(stopped_incognito.session_id))
+
+    def test_cleanup_can_remove_orphaned_active_incognito_on_startup(self):
+        incognito = self.store.create(incognito=True)
+
+        removed = self.store.cleanup(
+            retention_seconds=3600,
+            include_active_incognito=True,
+        )
+
+        self.assertEqual(removed, [incognito.session_id])
         self.assertIsNone(self.store.get(incognito.session_id))
 
     def test_active_session_is_recoverable_after_restart(self):

@@ -17,6 +17,11 @@ _EXCERPT_LIMIT = 5000
 _NOTE_BODY_LIMIT = 10000
 _SOURCE_TITLE_LIMIT = 160
 _NOTE_TITLE_LIMIT = 160
+_IMPORT_PAGE_LIMIT = 50
+_IMPORT_CITATION_TEXT_LIMIT = 2000
+_ORIGIN_LIMIT = 32
+_TUTOR_CONTEXT_LIMIT = 40000
+_TUTOR_CONTEXT_CITATIONS_PER_SOURCE = 6
 _PATH_DEPTHS = {"survey", "college", "graduate"}
 
 
@@ -104,6 +109,35 @@ def _clean_optional_text(value, field, limit):
     if value is None:
         return ""
     return _clean_text(value, field, limit, required=False)
+
+
+def _clean_http_url(value, field="url", required=False):
+    if required:
+        text = _clean_text(value, field, _URL_LIMIT)
+    else:
+        text = _clean_optional_text(value, field, _URL_LIMIT)
+    if not text:
+        return ""
+    parsed = urllib.parse.urlparse(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"{field} must be an http or https URL")
+    return text
+
+
+def _truncate(text, limit):
+    text = str(text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip()
+
+
+def _derived_title(url):
+    parsed = urllib.parse.urlparse(url)
+    leaf = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+    if leaf:
+        leaf = urllib.parse.unquote(leaf)
+        return _truncate(leaf, _SOURCE_TITLE_LIMIT)
+    return _truncate(parsed.netloc or "Imported source", _SOURCE_TITLE_LIMIT)
 
 
 def _source_id(notebook):
@@ -241,13 +275,16 @@ def add_source(notebook_id, payload):
     title = _clean_text(payload.get("title"), "title", _SOURCE_TITLE_LIMIT)
     excerpt = _clean_text(payload.get("excerpt"), "excerpt", _EXCERPT_LIMIT)
     url = payload.get("url")
-    clean_url = _clean_optional_text(url, "url", _URL_LIMIT) if url is not None else ""
-    if clean_url:
-        parsed_url = urllib.parse.urlparse(clean_url)
-        if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
-            raise ValueError("url must be an http or https URL")
+    clean_url = _clean_http_url(url, required=False) if url is not None else ""
     kind = payload.get("kind")
     clean_kind = _clean_optional_text(kind, "kind", 64) if kind is not None else ""
+    origin = payload.get("origin")
+    clean_origin = (
+        _clean_optional_text(origin, "origin", _ORIGIN_LIMIT)
+        if origin is not None
+        else ""
+    )
+    source_result = payload.get("source_result")
     source = {
         "id": _source_id(notebook),
         "title": title,
@@ -258,6 +295,115 @@ def add_source(notebook_id, payload):
         source["url"] = clean_url
     if clean_kind:
         source["kind"] = clean_kind
+    if clean_origin:
+        source["origin"] = clean_origin
+    if source_result is not None:
+        if not isinstance(source_result, dict):
+            raise ValueError("source_result must be an object")
+        result = {
+            "title": _clean_optional_text(
+                source_result.get("title"), "title", _SOURCE_TITLE_LIMIT
+            ),
+            "url": _clean_http_url(source_result.get("url"), required=False),
+            "kind": _clean_optional_text(source_result.get("kind"), "kind", 64),
+        }
+        source["source_result"] = {
+            key: value for key, value in result.items() if value
+        }
+    notebook["sources"].append(source)
+    notebook["updated_at"] = _now()
+    _write_notebook(notebook)
+    return source
+
+
+def _normalized_page_citations(source_id, pages):
+    citations = []
+    for raw in pages[:_IMPORT_PAGE_LIMIT]:
+        if not isinstance(raw, dict):
+            continue
+        page = raw.get("page")
+        text = raw.get("text")
+        if not isinstance(page, int) or page < 1 or not isinstance(text, str):
+            continue
+        clipped = _truncate(text, _IMPORT_CITATION_TEXT_LIMIT)
+        if not clipped:
+            continue
+        citations.append(
+            {
+                "id": f"{source_id}-p{page}",
+                "label": f"p. {page}",
+                "page": page,
+                "text": clipped,
+            }
+        )
+    return citations
+
+
+def _document_citation(source_id, text):
+    clipped = _truncate(text, _IMPORT_CITATION_TEXT_LIMIT)
+    if not clipped:
+        raise ValueError("imported source did not include readable text")
+    return {
+        "id": f"{source_id}-doc",
+        "label": "document",
+        "text": clipped,
+    }
+
+
+def _import_excerpt(citations, fallback_text):
+    parts = []
+    for citation in citations[:3]:
+        label = citation.get("label")
+        text = citation.get("text")
+        if not text:
+            continue
+        prefix = f"{label}: " if label and label != "document" else ""
+        parts.append(prefix + text)
+    if not parts:
+        parts.append(_truncate(fallback_text, _EXCERPT_LIMIT))
+    return _truncate("\n\n".join(part for part in parts if part), _EXCERPT_LIMIT)
+
+
+def import_source(notebook_id, payload, fetched):
+    notebook = _read_notebook_file(notebook_id)
+    if not isinstance(payload, dict):
+        raise ValueError("invalid source payload")
+    if not isinstance(fetched, dict):
+        raise ValueError("invalid imported source")
+    url = _clean_http_url(payload.get("url"), required=True)
+    title = _clean_optional_text(payload.get("title"), "title", _SOURCE_TITLE_LIMIT)
+    kind = _clean_optional_text(payload.get("kind"), "kind", 64)
+    content_type = _clean_optional_text(
+        fetched.get("content_type"),
+        "content_type",
+        160,
+    )
+    engine = _clean_optional_text(fetched.get("engine"), "engine", 64)
+    fetched_url = _clean_http_url(fetched.get("url") or url, required=True)
+    text = fetched.get("text")
+    if not isinstance(text, str):
+        raise ValueError("imported source did not include readable text")
+
+    source_id = _source_id(notebook)
+    pages = fetched.get("pages")
+    citations = []
+    if isinstance(pages, list):
+        citations = _normalized_page_citations(source_id, pages)
+    if not citations:
+        citations = [_document_citation(source_id, text)]
+
+    source = {
+        "id": source_id,
+        "title": title or _derived_title(fetched_url),
+        "url": fetched_url,
+        "kind": kind or ("paper" if content_type.startswith("application/pdf") else "import"),
+        "excerpt": _import_excerpt(citations, text),
+        "origin": "import",
+        "content_type": content_type or "text/plain",
+        "engine": engine or "import",
+        "citations": citations,
+        "created_at": _now(),
+    }
     notebook["sources"].append(source)
     notebook["updated_at"] = _now()
     _write_notebook(notebook)
@@ -304,3 +450,47 @@ def generate_learning_path(notebook_id, payload):
     notebook["updated_at"] = _now()
     _write_notebook(notebook)
     return notebook["learning_path"]
+
+
+def build_tutor_context(notebook_or_id):
+    notebook = (
+        _read_notebook_file(notebook_or_id)
+        if isinstance(notebook_or_id, str)
+        else notebook_or_id
+    )
+    if not isinstance(notebook, dict):
+        raise ValueError("invalid notebook")
+    chunks = [
+        f"Notebook: {notebook.get('title', '')}",
+        f"Learning goal: {notebook.get('goal') or 'not specified'}",
+    ]
+    for index, source in enumerate(notebook.get("sources") or (), start=1):
+        if not isinstance(source, dict):
+            continue
+        parts = [f"Source {index}: {source.get('title', 'Untitled source')}"]
+        if source.get("kind"):
+            parts.append(f"Kind: {source['kind']}")
+        if source.get("url"):
+            parts.append(f"URL: {source['url']}")
+        excerpt = _truncate(source.get("excerpt"), _EXCERPT_LIMIT)
+        if excerpt:
+            parts.append(f"Excerpt:\n{excerpt}")
+        citation_lines = []
+        for citation in (source.get("citations") or [])[:_TUTOR_CONTEXT_CITATIONS_PER_SOURCE]:
+            if not isinstance(citation, dict):
+                continue
+            label = _truncate(citation.get("label"), 40) or "document"
+            text = _truncate(citation.get("text"), 600)
+            if text:
+                citation_lines.append(f"{label}: {text}")
+        if citation_lines:
+            parts.append("Citations:\n" + "\n".join(citation_lines))
+        chunks.append("\n".join(parts))
+    for index, note in enumerate(notebook.get("notes") or (), start=1):
+        if not isinstance(note, dict):
+            continue
+        title = _truncate(note.get("title"), _NOTE_TITLE_LIMIT)
+        body = _truncate(note.get("body"), 1200)
+        if title or body:
+            chunks.append(f"Note {index}: {title}\n{body}".strip())
+    return "\n\n".join(chunks)[:_TUTOR_CONTEXT_LIMIT]

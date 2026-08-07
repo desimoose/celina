@@ -238,6 +238,63 @@ class NotebookApiTest(unittest.TestCase):
         self.assertEqual(notebook["learning_path"]["goal"], "Improve sleep habits")
         self.assertEqual(notebook["learning_path"]["depth"], "graduate")
 
+    def test_notebook_source_route_accepts_search_capture_metadata(self):
+        created, cookie, csrf = self._create_notebook()
+
+        source_status, _headers, body = self._request(
+            "POST",
+            "/api/notebooks/sleep-research/sources",
+            {
+                "title": "Controlled trial",
+                "url": "https://example.test/trial",
+                "kind": "research",
+                "excerpt": "Search excerpt:\nEvening caffeine delayed sleep onset.",
+                "origin": "search",
+                "source_result": {
+                    "title": "Controlled trial",
+                    "url": "https://example.test/trial",
+                    "kind": "research",
+                },
+            },
+            self._mutation_headers(cookie, csrf),
+        )
+        self.assertEqual(source_status, 201)
+        source = json.loads(body)["source"]
+        self.assertEqual(source["origin"], "search")
+        self.assertEqual(source["source_result"]["url"], "https://example.test/trial")
+
+        read, _headers, body = self._request(
+            "GET", "/api/notebooks/sleep-research", headers={"Cookie": cookie}
+        )
+        self.assertEqual(read, 200)
+        notebook = json.loads(body)["notebook"]
+        self.assertEqual(notebook["sources"][0]["origin"], "search")
+
+    def test_notebook_source_route_rejects_unsafe_search_capture_urls(self):
+        created, cookie, csrf = self._create_notebook()
+
+        source_status, _headers, body = self._request(
+            "POST",
+            f"/api/notebooks/{created['notebook']['id']}/sources",
+            {
+                "title": "Unsafe result",
+                "url": "https://example.test/trial",
+                "kind": "research",
+                "excerpt": "Search excerpt:\nUnsafe source metadata.",
+                "origin": "search",
+                "source_result": {
+                    "title": "Unsafe result",
+                    "url": "javascript:alert(1)",
+                    "kind": "research",
+                },
+            },
+            self._mutation_headers(cookie, csrf),
+        )
+        self.assertEqual(source_status, 400)
+        self.assertEqual(
+            json.loads(body), {"error": "url must be an http or https URL"}
+        )
+
     def test_notebook_reads_require_launch_cookie(self):
         status, _headers, _body = self._request("GET", "/api/notebooks")
         self.assertEqual(status, 403)
@@ -279,6 +336,11 @@ class NotebookApiTest(unittest.TestCase):
                 "POST",
                 f"/api/notebooks/{notebook_id}/learning-path",
                 {"goal": "Learn", "depth": "survey"},
+            ),
+            (
+                "POST",
+                f"/api/notebooks/{notebook_id}/sources/import",
+                {"url": "https://example.test/paper.pdf", "title": "Paper", "kind": "paper"},
             ),
         )
 
@@ -325,6 +387,143 @@ class NotebookApiTest(unittest.TestCase):
         self.assertEqual(json.loads(body), {"error": "body is required"})
         with open(notebook_file, "r", encoding="utf-8") as fh:
             self.assertEqual(fh.read(), before)
+
+    @mock.patch.object(app.tools, "fetch")
+    def test_notebook_source_import_route_imports_html_with_document_citation(
+        self,
+        fetch_page,
+    ):
+        fetch_page.return_value = {
+            "url": "https://example.test/article",
+            "content_type": "text/html; charset=utf-8",
+            "engine": "plain",
+            "text": "Imported body " * 500,
+        }
+        created, cookie, csrf = self._create_notebook(title="Imports")
+
+        status, _headers, body = self._request(
+            "POST",
+            f"/api/notebooks/{created['notebook']['id']}/sources/import",
+            {
+                "url": "https://example.test/article",
+                "title": "Imported article",
+                "kind": "paper",
+            },
+            self._mutation_headers(cookie, csrf),
+        )
+
+        self.assertEqual(status, 201)
+        source = json.loads(body)["source"]
+        self.assertEqual(source["origin"], "import")
+        self.assertEqual(source["content_type"], "text/html; charset=utf-8")
+        self.assertEqual(source["engine"], "plain")
+        self.assertEqual(source["citations"][0]["label"], "document")
+        fetch_page.assert_called_once_with("https://example.test/article")
+
+    @mock.patch.object(app.tools, "fetch")
+    def test_notebook_source_import_route_uses_pdf_page_citations_when_available(
+        self,
+        fetch_page,
+    ):
+        fetch_page.return_value = {
+            "url": "https://example.test/paper.pdf",
+            "content_type": "application/pdf",
+            "engine": "obscura-pdf",
+            "text": "Readable PDF text.",
+            "pages": [
+                {"page": 1, "text": "Page one evidence."},
+                {"page": 2, "text": "Page two evidence."},
+            ],
+        }
+        created, cookie, csrf = self._create_notebook(title="PDF imports")
+
+        status, _headers, body = self._request(
+            "POST",
+            f"/api/notebooks/{created['notebook']['id']}/sources/import",
+            {
+                "url": "https://example.test/paper.pdf",
+                "title": "Paper import",
+                "kind": "paper",
+            },
+            self._mutation_headers(cookie, csrf),
+        )
+
+        self.assertEqual(status, 201)
+        source = json.loads(body)["source"]
+        self.assertEqual(source["content_type"], "application/pdf")
+        self.assertEqual(source["citations"][0]["label"], "p. 1")
+        self.assertEqual(source["citations"][0]["page"], 1)
+        self.assertEqual(source["citations"][1]["label"], "p. 2")
+
+    @mock.patch.object(app.tools, "fetch", return_value={
+        "url": "https://example.test/article",
+        "content_type": "text/html",
+        "engine": "plain",
+        "text": "URL-only import body",
+    })
+    def test_notebook_source_import_allows_optional_title_and_kind(self, fetch_page):
+        created, cookie, csrf = self._create_notebook(title="Optional imports")
+
+        status, _headers, body = self._request(
+            "POST",
+            f"/api/notebooks/{created['notebook']['id']}/sources/import",
+            {"url": "https://example.test/article"},
+            self._mutation_headers(cookie, csrf),
+        )
+
+        self.assertEqual(status, 201)
+        source = json.loads(body)["source"]
+        self.assertEqual(source["title"], "article")
+        self.assertEqual(source["kind"], "import")
+        fetch_page.assert_called_once_with("https://example.test/article")
+
+    @mock.patch.object(app.tools, "fetch", side_effect=RuntimeError("upstream failed"))
+    def test_notebook_source_import_returns_json_error_when_fetch_fails(self, fetch_page):
+        created, cookie, csrf = self._create_notebook(title="Failed imports")
+
+        status, _headers, body = self._request(
+            "POST",
+            f"/api/notebooks/{created['notebook']['id']}/sources/import",
+            {"url": "https://example.test/article"},
+            self._mutation_headers(cookie, csrf),
+        )
+
+        self.assertEqual(status, 502)
+        self.assertEqual(json.loads(body), {"error": "could not import source"})
+        fetch_page.assert_called_once_with("https://example.test/article")
+
+    @mock.patch.object(app.tools, "fetch")
+    def test_notebook_source_import_route_rejects_unsafe_and_oversized_urls(
+        self,
+        fetch_page,
+    ):
+        created, cookie, csrf = self._create_notebook(title="Unsafe imports")
+        notebook_id = created["notebook"]["id"]
+
+        status, _headers, body = self._request(
+            "POST",
+            f"/api/notebooks/{notebook_id}/sources/import",
+            {"url": "javascript:alert(1)", "title": "Bad", "kind": "paper"},
+            self._mutation_headers(cookie, csrf),
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(
+            json.loads(body), {"error": "url must be an http or https URL"}
+        )
+
+        status, _headers, body = self._request(
+            "POST",
+            f"/api/notebooks/{notebook_id}/sources/import",
+            {
+                "url": "https://example.test/" + ("a" * 3000),
+                "title": "Too long",
+                "kind": "paper",
+            },
+            self._mutation_headers(cookie, csrf),
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body), {"error": "url is too long"})
+        fetch_page.assert_not_called()
 
 
 if __name__ == "__main__":

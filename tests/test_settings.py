@@ -1,6 +1,7 @@
 import importlib
 import json
 import os
+import sqlite3
 import sys
 import threading
 import unittest
@@ -118,11 +119,32 @@ class SettingsUiSourceTest(unittest.TestCase):
             source,
         )
 
+    def test_privacy_ui_exposes_provider_disclosure_and_session_actions(self):
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        with open(os.path.join(root, "web", "app.js"), encoding="utf-8") as fh:
+            js = fh.read()
+        with open(os.path.join(root, "web", "index.html"), encoding="utf-8") as fh:
+            html = fh.read()
+
+        self.assertIn('session_retention_seconds', js)
+        self.assertIn('provider_privacy', js)
+        self.assertIn('Ollama — stays on this machine', js)
+        self.assertIn('question/context sent to provider', js)
+        self.assertIn('Incognito — deletes on end', js)
+        self.assertIn('Auto-delete after 24 hours', js)
+        self.assertIn('Delete current session', js)
+        self.assertIn('session-badge', html)
+
 
 class SettingsRoutesTest(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("CELINA_HOME", None)
-        for k in ("OPENAI_API_KEY", "FINDER_CONTACT_EMAIL", "BOGUS_ENV"):
+        for k in (
+            "OPENAI_API_KEY",
+            "FINDER_CONTACT_EMAIL",
+            "BOGUS_ENV",
+            "CELINA_SESSION_RETENTION_SECONDS",
+        ):
             os.environ.pop(k, None)
 
     def _serve(self, app):
@@ -131,11 +153,19 @@ class SettingsRoutesTest(unittest.TestCase):
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         return srv, port
 
-    def _post(self, port, body):
+    def _mutation_headers(self, srv):
+        return {
+            "Content-Type": "application/json",
+            "Cookie": srv.local_security.launch_cookie_header.split(";", 1)[0],
+            "X-Celina-CSRF": srv.local_security.csrf_token,
+            "Origin": srv.local_security.expected_origin,
+        }
+
+    def _post(self, srv, port, body):
         req = urllib.request.Request(
             f"http://127.0.0.1:{port}/api/settings",
             data=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=self._mutation_headers(srv),
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=5) as r:
@@ -145,7 +175,7 @@ class SettingsRoutesTest(unittest.TestCase):
         home, app, gateway = _fresh_home("rvb_routes1")
         srv, port = self._serve(app)
         try:
-            self._post(port, {"keys": {"OPENAI_API_KEY": "sk-livevalue99"}})
+            self._post(srv, port, {"keys": {"OPENAI_API_KEY": "sk-livevalue99"}})
             self.assertEqual(gateway.key_for("openai"), "sk-livevalue99")
             with open(os.path.join(home, ".env"), encoding="utf-8") as fh:
                 text = fh.read()
@@ -175,7 +205,7 @@ class SettingsRoutesTest(unittest.TestCase):
         home, app, _ = _fresh_home("rvb_routes3")
         srv, port = self._serve(app)
         try:
-            self._post(port, {"keys": {"BOGUS_ENV": "x"}})
+            self._post(srv, port, {"keys": {"BOGUS_ENV": "x"}})
             self.assertIsNone(os.environ.get("BOGUS_ENV"))
             with open(os.path.join(home, ".env"), encoding="utf-8") as fh:
                 text = fh.read()
@@ -189,9 +219,135 @@ class SettingsRoutesTest(unittest.TestCase):
         srv, port = self._serve(app)
         try:
             with self.assertRaises(urllib.error.HTTPError) as ctx:
-                self._post(port, {"keys": {"OPENAI_API_KEY": 123}})
+                self._post(srv, port, {"keys": {"OPENAI_API_KEY": 123}})
             self.assertEqual(ctx.exception.code, 400)
             ctx.exception.close()
+        finally:
+            srv.shutdown(); srv.server_close()
+
+    def test_post_rejects_missing_mutation_credentials(self):
+        _fresh_home("rvb_routes4b")
+        import app
+        srv, port = self._serve(app)
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/settings",
+                data=json.dumps({"finder_email": "hello@example.com"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(req, timeout=5)
+            self.assertEqual(ctx.exception.code, 403)
+            ctx.exception.close()
+        finally:
+            srv.shutdown(); srv.server_close()
+
+    def test_get_exposes_session_retention_and_provider_privacy(self):
+        _fresh_home("rvb_routes5")
+        import app
+        srv, port = self._serve(app)
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/api/settings", timeout=5
+            ) as r:
+                body = json.loads(r.read().decode("utf-8"))
+
+            self.assertEqual(body["session_retention_seconds"], 86400)
+            self.assertEqual(
+                body["provider_privacy"]["ollama"],
+                "Ollama — stays on this machine",
+            )
+            self.assertIn("question/context sent to provider", body["provider_privacy"]["openai"])
+        finally:
+            srv.shutdown(); srv.server_close()
+
+    def test_post_persists_allowed_session_retention_seconds(self):
+        home, app, _ = _fresh_home("rvb_routes6")
+        srv, port = self._serve(app)
+        try:
+            for value in (0, 3600, 86400, 604800):
+                with self.subTest(value=value):
+                    response = self._post(
+                        srv, port, {"session_retention_seconds": value}
+                    )
+                    self.assertEqual(response["session_retention_seconds"], value)
+                    with open(os.path.join(home, ".env"), encoding="utf-8") as fh:
+                        text = fh.read()
+                    self.assertIn(
+                        f"CELINA_SESSION_RETENTION_SECONDS={value}", text
+                    )
+
+            srv.shutdown()
+            srv.server_close()
+
+            os.environ.pop("CELINA_SESSION_RETENTION_SECONDS", None)
+            importlib.reload(app)
+            srv2, port2 = self._serve(app)
+            try:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port2}/api/settings", timeout=5
+                ) as r:
+                    body = json.loads(r.read().decode("utf-8"))
+                self.assertEqual(body["session_retention_seconds"], 604800)
+            finally:
+                srv2.shutdown(); srv2.server_close()
+        finally:
+            pass
+
+    def test_post_rejects_invalid_session_retention_seconds(self):
+        _fresh_home("rvb_routes7")
+        import app
+        srv, port = self._serve(app)
+        try:
+            for value in (-1, 1, 42, "86400"):
+                with self.subTest(value=value):
+                    req = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/api/settings",
+                        data=json.dumps(
+                            {"session_retention_seconds": value}
+                        ).encode("utf-8"),
+                        headers=self._mutation_headers(srv),
+                        method="POST",
+                    )
+                    with self.assertRaises(urllib.error.HTTPError) as ctx:
+                        urllib.request.urlopen(req, timeout=5)
+                    self.assertEqual(ctx.exception.code, 400)
+                    ctx.exception.close()
+        finally:
+            srv.shutdown(); srv.server_close()
+
+    def test_post_immediate_retention_triggers_cleanup(self):
+        _fresh_home("rvb_routes8")
+        import app
+        srv, port = self._serve(app)
+        try:
+            stopped = srv.session_store.create()
+            srv.session_store.mark_stopped(stopped.session_id)
+            connection = sqlite3.connect(
+                os.path.join(
+                    srv.session_store.root,
+                    stopped.session_id,
+                    "ledger.sqlite3",
+                )
+            )
+            try:
+                connection.execute(
+                    "UPDATE session SET last_active_at = ?",
+                    ("2020-01-01T00:00:00.000Z",),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            response = self._post(
+                srv,
+                port,
+                {"session_retention_seconds": 0},
+            )
+
+            self.assertEqual(response["session_retention_seconds"], 0)
+            self.assertIsNone(srv.session_store.get(stopped.session_id))
         finally:
             srv.shutdown(); srv.server_close()
 

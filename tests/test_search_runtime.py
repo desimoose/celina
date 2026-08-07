@@ -107,12 +107,17 @@ class PageReaderTrafficTest(unittest.TestCase):
         )
 
     @mock.patch("tools.pdf.extract_text", return_value=("Extracted PDF body.", "stdlib"))
+    @mock.patch(
+        "tools.pdf.extract_pages",
+        return_value=[{"page": 1, "text": "First page evidence."}],
+    )
     @mock.patch("tools.find_obscura", return_value=None)
     @mock.patch("tools.traffic.http_request")
     def test_plain_pdf_response_is_extracted_before_returning_evidence(
         self,
         recorded_request,
         _find_obscura,
+        extract_pages,
         extract_text,
     ):
         pdf_bytes = b"%PDF-1.7\nBinary PDF body"
@@ -128,7 +133,14 @@ class PageReaderTrafficTest(unittest.TestCase):
         self.assertEqual(page.get("engine"), "plain-pdf")
         self.assertEqual(page.get("content_type"), "application/pdf")
         self.assertEqual(page.get("text"), "Extracted PDF body.")
-        extract_text.assert_called_once_with(pdf_bytes)
+        self.assertEqual(
+            page.get("pages"),
+            [{"page": 1, "text": "First page evidence."}],
+        )
+        extract_text.assert_called_once_with(
+            pdf_bytes, max_pages=50, max_chars_per_page=2000
+        )
+        extract_pages.assert_called_once_with(pdf_bytes)
 
     @mock.patch("tools.obscura_dump", return_value="should not be read")
     @mock.patch("tools.find_obscura", return_value=r"C:\vendor\obscura.exe")
@@ -172,7 +184,14 @@ class PageReaderTrafficTest(unittest.TestCase):
         self.assertEqual(page["text"], "Complete extracted body.")
         self.assertEqual(page["content_type"], "text/plain")
 
-    @mock.patch("tools._fetch_obscura_pdf", return_value=("PDF body.", "pypdf"))
+    @mock.patch(
+        "tools._fetch_obscura_pdf_payload",
+        return_value={
+            "text": "PDF body.",
+            "backend": "pypdf",
+            "pages": [{"page": 1, "text": "PDF body."}],
+        },
+    )
     @mock.patch("tools.find_obscura", return_value=r"C:\vendor\obscura.exe")
     def test_pdf_page_fetch_forwards_traffic_context(
         self,
@@ -188,6 +207,7 @@ class PageReaderTrafficTest(unittest.TestCase):
         )
         self.assertEqual(page["text"], "PDF body.")
         self.assertEqual(page.get("content_type"), "application/pdf")
+        self.assertEqual(page.get("pages"), [{"page": 1, "text": "PDF body."}])
 
 
 class SearchRuntimeEndToEndTest(unittest.TestCase):

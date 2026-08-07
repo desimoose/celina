@@ -43,6 +43,7 @@ import scanner  # noqa: E402
 import search_runtime  # noqa: E402
 import serialization  # noqa: E402
 import sessions  # noqa: E402
+import session_cleanup  # noqa: E402
 import sse  # noqa: E402
 import tokens  # noqa: E402
 import tools  # noqa: E402
@@ -58,6 +59,8 @@ SYSTEM_PROMPT = (
 )
 
 _DEFAULT_SESSION_RETENTION_SECONDS = 24 * 60 * 60
+_SESSION_RETENTION_CHOICES = {0, 3600, 86400, 604800}
+SessionJanitor = session_cleanup.SessionJanitor
 
 
 _ENV_TEMPLATE = """\
@@ -126,6 +129,16 @@ def session_retention_seconds():
         return max(0, int(raw))
     except (TypeError, ValueError):
         return _DEFAULT_SESSION_RETENTION_SECONDS
+
+
+def provider_privacy_state():
+    out = {}
+    for name, spec in gateway.PROVIDERS.items():
+        if spec["key_env"] is None:
+            out[name] = "Ollama — stays on this machine"
+        else:
+            out[name] = "%s — question/context sent to provider" % spec["label"]
+    return out
 
 
 def update_env(updates):
@@ -262,6 +275,8 @@ class Handler(BaseHTTPRequestHandler):
     @staticmethod
     def _notebook_request_value(payload, field, *, limit, required=True):
         value = payload.get(field)
+        if value is None and not required:
+            return ""
         if not isinstance(value, str):
             raise ValueError(f"{field} must be text")
         text = value.strip()
@@ -418,6 +433,15 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 return self._send(400, {"error": "invalid JSON body"})
             return self._post_notebook_route(parsed, payload)
+        if route == "/api/settings":
+            if not self._allows_session_mutation(parsed.query):
+                self._discard_request_body()
+                return self._forbidden()
+            try:
+                payload = self._read_json()
+            except Exception:
+                return self._send(400, {"error": "invalid JSON body"})
+            return self._save_settings(payload)
         try:
             payload = self._read_json()
         except Exception:
@@ -437,8 +461,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._create_project(payload, parsed.query)
         if route.startswith("/api/projects/"):
             return self._save_project_output(parsed, payload)
-        if route == "/api/settings":
-            return self._save_settings(payload)
         return self._send(404, {"error": "no such endpoint"})
 
     def do_DELETE(self):
@@ -663,6 +685,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": str(e)})
             except OSError as e:
                 return self._send(500, {"error": str(e)})
+            except Exception:
+                return self._send(500, {"error": "could not create notebook"})
             return self._send(201, {"notebook": notebook})
 
         prefix = "/api/notebooks/"
@@ -670,24 +694,31 @@ class Handler(BaseHTTPRequestHandler):
         if not suffix:
             return self._not_found()
         parts = suffix.split("/")
-        if len(parts) != 2 or not parts[1]:
+        if len(parts) not in {2, 3} or not parts[1]:
             return self._not_found()
         try:
             notebook_id = self._safe_notebook_id(parts[0])
             payload = self._require_object(payload, "invalid notebook request")
-            if parts[1] == "sources":
+            if parts[1] == "sources" and len(parts) == 2:
                 source = self._create_notebook_source(notebook_id, payload)
                 return self._send(201, {"source": source})
-            if parts[1] == "notes":
+            if parts[1] == "sources" and len(parts) == 3 and parts[2] == "import":
+                source = self._import_notebook_source(notebook_id, payload)
+                return self._send(201, {"source": source})
+            if parts[1] == "notes" and len(parts) == 2:
                 note = self._create_notebook_note(notebook_id, payload)
                 return self._send(201, {"note": note})
-            if parts[1] == "learning-path":
+            if parts[1] == "learning-path" and len(parts) == 2:
                 learning_path = self._generate_learning_path(notebook_id, payload)
                 return self._send(200, {"learning_path": learning_path})
         except ValueError as e:
             return self._send(400, {"error": str(e)})
         except OSError as e:
             return self._send(500, {"error": str(e)})
+        except Exception:
+            if suffix.endswith("/sources/import"):
+                return self._send(502, {"error": "could not import source"})
+            return self._send(500, {"error": "could not update notebook"})
         return self._not_found()
 
     def _create_notebook_source(self, notebook_id, payload):
@@ -705,6 +736,31 @@ class Handler(BaseHTTPRequestHandler):
                 payload, "excerpt", limit=notebooks._EXCERPT_LIMIT
             ),
         }
+        if "origin" in payload:
+            request["origin"] = self._notebook_request_value(
+                payload, "origin", limit=notebooks._ORIGIN_LIMIT, required=False
+            )
+        if "source_result" in payload:
+            source_result = payload.get("source_result")
+            if not isinstance(source_result, dict):
+                raise ValueError("source_result must be an object")
+            request["source_result"] = {
+                "title": self._notebook_request_value(
+                    source_result,
+                    "title",
+                    limit=notebooks._SOURCE_TITLE_LIMIT,
+                    required=False,
+                ),
+                "url": self._notebook_request_value(
+                    source_result,
+                    "url",
+                    limit=notebooks._URL_LIMIT,
+                    required=False,
+                ),
+                "kind": self._notebook_request_value(
+                    source_result, "kind", limit=64, required=False
+                ),
+            }
         return notebooks.add_source(notebook_id, request)
 
     def _create_notebook_note(self, notebook_id, payload):
@@ -723,6 +779,25 @@ class Handler(BaseHTTPRequestHandler):
             "source_ids": source_ids,
         }
         return notebooks.add_note(notebook_id, request)
+
+    def _import_notebook_source(self, notebook_id, payload):
+        notebooks.read_notebook(notebook_id)
+        request = {
+            "url": notebooks._clean_http_url(
+                self._notebook_request_value(
+                    payload, "url", limit=notebooks._URL_LIMIT
+                ),
+                required=True,
+            ),
+            "title": self._notebook_request_value(
+                payload, "title", limit=notebooks._SOURCE_TITLE_LIMIT, required=False
+            ),
+            "kind": self._notebook_request_value(
+                payload, "kind", limit=64, required=False
+            ),
+        }
+        fetched = tools.fetch(request["url"])
+        return notebooks.import_source(notebook_id, request, fetched)
 
     def _generate_learning_path(self, notebook_id, payload):
         depth = payload.get("depth")
@@ -903,6 +978,8 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(200, {
             "providers": gateway.settings_state(),
             "finder_email": os.environ.get("FINDER_CONTACT_EMAIL", ""),
+            "session_retention_seconds": session_retention_seconds(),
+            "provider_privacy": provider_privacy_state(),
         })
 
     def _save_settings(self, payload):
@@ -910,6 +987,7 @@ class Handler(BaseHTTPRequestHandler):
         model_envs = {s["model_env"] for s in gateway.PROVIDERS.values()}
 
         updates = {}
+        retention_changed = False
         try:
             for env, val in (payload.get("keys") or {}).items():
                 if env in key_envs:
@@ -921,6 +999,18 @@ class Handler(BaseHTTPRequestHandler):
                     if not isinstance(val, str):
                         raise ValueError("model values must be strings")
                     updates[env] = val.strip()
+            if "session_retention_seconds" in payload:
+                retention = payload["session_retention_seconds"]
+                if not (
+                    isinstance(retention, int)
+                    and not isinstance(retention, bool)
+                    and retention in _SESSION_RETENTION_CHOICES
+                ):
+                    raise ValueError(
+                        "session_retention_seconds must be one of: 0, 3600, 86400, 604800"
+                    )
+                updates["CELINA_SESSION_RETENTION_SECONDS"] = str(retention)
+                retention_changed = True
             if "finder_email" in payload:
                 val = payload["finder_email"]
                 if not isinstance(val, str):
@@ -932,6 +1022,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if updates:
                 update_env(updates)
+            if retention_changed:
+                janitor = getattr(self.server, "session_janitor", None)
+                if janitor is not None:
+                    janitor.run_once()
         except Exception as e:
             return self._send(500, {"error": f"could not write settings: {e}"})
 
@@ -994,6 +1088,13 @@ class Server(ThreadingHTTPServer):
         # log_message uses instead of a stack trace on every disconnect.
         sys.stderr.write("  local request completed\n")
 
+    def server_close(self):
+        janitor = getattr(self, "session_janitor", None)
+        if janitor is not None:
+            janitor.stop()
+            janitor.join(timeout=0.25)
+        return super().server_close()
+
 
 def _bound_origin(host, port):
     host = str(host)
@@ -1013,7 +1114,12 @@ def make_server(port=None, host="127.0.0.1", session_root=None):
     server = Server((host, port), Handler)
     bound_host, bound_port = server.server_address[:2]
     store = sessions.SessionStore(session_root)
-    store.cleanup(session_retention_seconds())
+    server.session_janitor = session_cleanup.SessionJanitor(
+        store,
+        session_retention_seconds,
+    )
+    server.session_janitor.run_once(include_active_incognito=True)
+    server.session_janitor.start()
     server.session_store = store
     server.event_bus = events.EventBus(store)
     server.search_runtime = search_runtime.SearchRuntime(

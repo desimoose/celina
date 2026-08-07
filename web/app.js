@@ -17,7 +17,10 @@ const state = {
   notebooks: [],
   activeNotebook: null,
   activeNotebookSourceId: null,
+  selectedSearchNotebookId: "",
   outputFormat: "markdown",
+  sessionRetentionSeconds: 86400,
+  providerPrivacy: {},
   sessionId: null,      // local research session (created on first search)
   incognito: false,     // ephemeral search session; deleted on end or page close
   activeRunId: null,    // the bounded search run currently streaming
@@ -33,6 +36,7 @@ const escapeHtml = (s) =>
   (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const looksLikeUrl = (s) => /^https?:\/\//i.test(s);
 const csrfToken = () => document.querySelector('meta[name="celina-csrf"]')?.content || "";
+const searchCapture = () => window.SearchCapture || {};
 
 // ---------- accessibility: focus trap for modal-style overlays ----------
 
@@ -77,6 +81,7 @@ function releaseFocus(focusInstead) {
 
 async function boot() {
   await refreshConfig();
+  try { await loadSettingsMeta(); } catch (err) { setEngine("Could not load privacy settings: " + err.message); }
   try { await loadFiles(); } catch (err) { setEngine("Could not load Library: " + err.message); }
   try { await loadProjects(); } catch (err) { setEngine("Library is unavailable: " + err.message); }
   await loadNotebooks();
@@ -112,6 +117,7 @@ async function refreshConfig() {
     state.tools = [];
   }
   pickProvider();
+  updatePrivacyUi();
 }
 
 // Auto-pick the active AI. A connected (keyed) provider is preferred over a
@@ -129,6 +135,66 @@ function pickProvider() {
 // A keyed (non-local) provider is connected.
 function isConnected() {
   return state.providers.some((p) => !p.local && p.ready);
+}
+
+function retentionLabel(seconds) {
+  if (seconds === 0) return "immediately";
+  if (seconds === 3600) return "1 hour";
+  if (seconds === 86400) return "24 hours";
+  if (seconds === 604800) return "7 days";
+  return `${seconds} seconds`;
+}
+
+const RETENTION_BADGE_LABELS = {
+  0: "Auto-delete immediately",
+  3600: "Auto-delete after 1 hour",
+  86400: "Auto-delete after 24 hours",
+  604800: "Auto-delete after 7 days",
+};
+
+function providerPrivacyText(providerId = state.provider) {
+  const selected = state.providers.find((p) => p.id === providerId);
+  if (selected?.local) return "Ollama — stays on this machine";
+  return state.providerPrivacy[providerId] || "question/context sent to provider";
+}
+
+function sessionBadgeText() {
+  if (state.incognito) return "Incognito — deletes on end";
+  return RETENTION_BADGE_LABELS[state.sessionRetentionSeconds]
+    || `Auto-delete after ${retentionLabel(state.sessionRetentionSeconds)}`;
+}
+
+function sessionStateText() {
+  if (state.sessionId) return state.incognito ? "Current session: active (incognito)" : "Current session: active";
+  return state.incognito ? "Current session: waiting to start (incognito)" : "Current session: not started";
+}
+
+function updatePrivacyUi() {
+  const badge = $("session-badge");
+  if (badge) badge.textContent = sessionBadgeText();
+  const stateEl = $("session-state");
+  if (stateEl) stateEl.textContent = sessionStateText();
+  const deleteBtn = $("session-delete");
+  if (deleteBtn) deleteBtn.disabled = !state.sessionId;
+  const composerCopy = $("composer-privacy");
+  if (composerCopy) composerCopy.textContent = providerPrivacyText();
+  const settingsCopy = $("set-provider-privacy");
+  if (settingsCopy) settingsCopy.textContent = providerPrivacyText($("set-provider")?.value || state.provider);
+  const settingsBadge = $("set-session-badge");
+  if (settingsBadge) settingsBadge.textContent = sessionBadgeText();
+  const settingsState = $("set-session-state");
+  if (settingsState) settingsState.textContent = sessionStateText();
+  const settingsDelete = $("set-delete-session");
+  if (settingsDelete) settingsDelete.disabled = !state.sessionId;
+}
+
+async function loadSettingsMeta() {
+  const data = await fetch("/api/settings").then((r) => r.json());
+  if (data.error) throw new Error(data.error);
+  state.sessionRetentionSeconds = data.session_retention_seconds ?? state.sessionRetentionSeconds;
+  state.providerPrivacy = data.provider_privacy || {};
+  updatePrivacyUi();
+  return data;
 }
 
 // ---------- first-run welcome ----------
@@ -172,7 +238,10 @@ async function wlConnect() {
   try {
     const res = await fetch("/api/settings", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Celina-CSRF": csrfToken(),
+      },
       body: JSON.stringify({ keys: { OPENROUTER_API_KEY: key } }),
     }).then((r) => r.json());
     if (res.error) { $("wl-msg").textContent = res.error; return; }
@@ -200,7 +269,7 @@ function openExternal(url) {
 
 // ---------- settings ----------
 
-let settingsInitial = null;  // { finder }
+let settingsInitial = null;  // { finder, sessionRetentionSeconds }
 
 function wireSettings() {
   $("settings-open").addEventListener("click", openSettings);
@@ -216,7 +285,13 @@ function wireSettings() {
 }
 
 async function openSettings() {
-  const data = await fetch("/api/settings").then((r) => r.json());
+  const data = await loadSettingsMeta();
+  const retentionOptions = [
+    [0, "Immediately"],
+    [3600, "1 hour"],
+    [86400, "24 hours"],
+    [604800, "7 days"],
+  ];
   const rows = data.providers.map((p) => {
     const clearBtn = (!p.local && p.has_key)
       ? `<button type="button" class="set-clear" data-clear-for="${p.key_env}">Clear</button>` : "";
@@ -242,6 +317,23 @@ async function openSettings() {
       <select id="set-provider" class="set-select">
         ${ready.map((p) => `<option value="${p.id}"${p.id === state.provider ? " selected" : ""}>${escapeHtml(p.label)}${p.local ? " (local)" : ""}</option>`).join("")}
       </select>
+      <div class="set-help" id="set-provider-privacy">${escapeHtml(providerPrivacyText())}</div>
+    </div>`;
+  const sessionPrivacy = `
+    <div class="set-row">
+      <div class="set-label">Session retention</div>
+      <select id="set-retention" class="set-select">
+        ${retentionOptions.map(([value, label]) => `<option value="${value}"${value === state.sessionRetentionSeconds ? " selected" : ""}>${label}</option>`).join("")}
+      </select>
+      <div class="set-help" id="set-session-badge">${escapeHtml(sessionBadgeText())}</div>
+    </div>
+    <div class="set-row">
+      <div class="set-label">Current session</div>
+      <div class="set-inline">
+        <span class="set-state" id="set-session-state">${escapeHtml(sessionStateText())}</span>
+        <button type="button" class="set-delete" id="set-delete-session"${state.sessionId ? "" : " disabled"}>Delete current session</button>
+      </div>
+      <div class="set-help">Incognito only affects the Celina session locally. It does not change how external providers handle what you ask them.</div>
     </div>`;
   const toolsStatus = `
     <div class="set-row">
@@ -250,15 +342,24 @@ async function openSettings() {
         ${state.tools.map((t) => `<span class="set-tool${t.present ? " on" : ""}">${escapeHtml(t.label)} &middot; ${t.present ? "connected" : "not found"}</span>`).join("")}
       </div>
     </div>`;
-  $("settings-body").innerHTML = whichAI + toolsStatus + rows + `
+  $("settings-body").innerHTML = sessionPrivacy + whichAI + toolsStatus + rows + `
     <div class="set-row">
       <div class="set-label">Finder contact email</div>
       <input type="text" id="set-finder" placeholder="you@example.com"
              value="${escapeHtml(data.finder_email || "")}" />
     </div>`;
   const sp = $("set-provider");
-  if (sp) sp.addEventListener("change", () => { state.provider = sp.value; state.providerManual = true; });
-  settingsInitial = { finder: data.finder_email || "" };
+  if (sp) sp.addEventListener("change", () => { state.provider = sp.value; state.providerManual = true; updatePrivacyUi(); });
+  const retention = $("set-retention");
+  if (retention) retention.addEventListener("change", () => updatePrivacyUi());
+  const deleteSession = $("set-delete-session");
+  if (deleteSession) deleteSession.addEventListener("click", async () => {
+    $("settings-msg").textContent = "Deleting current session...";
+    const ok = await deleteCurrentSession();
+    if (ok) updatePrivacyUi();
+    $("settings-msg").textContent = ok ? "Current session deleted." : $("settings-msg").textContent;
+  });
+  settingsInitial = { finder: data.finder_email || "", sessionRetentionSeconds: data.session_retention_seconds ?? 86400 };
   for (const btn of document.querySelectorAll("#settings-body .set-clear")) {
     btn.addEventListener("click", () => {
       const input = document.querySelector(`input[data-key="${btn.dataset.clearFor}"]`);
@@ -288,16 +389,22 @@ async function saveSettings() {
   const body = { keys, models };
   const finder = $("set-finder").value;
   if (finder !== settingsInitial.finder) body.finder_email = finder;
+  const retention = Number($("set-retention").value);
+  if (retention !== settingsInitial.sessionRetentionSeconds) body.session_retention_seconds = retention;
 
   $("settings-msg").textContent = "Saving...";
   try {
     const res = await fetch("/api/settings", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Celina-CSRF": csrfToken(),
+      },
       body: JSON.stringify(body),
     }).then((r) => r.json());
     if (res.error) { $("settings-msg").textContent = res.error; return; }
     await refreshConfig();   // provider readiness updates immediately
+    await loadSettingsMeta();
     closeSettings();
   } catch (e) {
     $("settings-msg").textContent = "Could not save: " + e.message;
@@ -445,6 +552,13 @@ async function loadNotebooks() {
     const data = await fetch("/api/notebooks").then((r) => r.json());
     if (data.error) throw new Error(data.error);
     state.notebooks = data.notebooks || [];
+    state.selectedSearchNotebookId = searchCapture().resolveSelectedNotebookId
+      ? searchCapture().resolveSelectedNotebookId(
+        state.notebooks,
+        state.selectedSearchNotebookId,
+        state.activeNotebook?.id || "",
+      )
+      : (state.selectedSearchNotebookId || state.activeNotebook?.id || state.notebooks[0]?.id || "");
     if (state.activeNotebook && state.notebooks.some((n) => n.id === state.activeNotebook.id)) {
       await selectNotebook(state.activeNotebook.id, false);
     } else if (state.notebooks.length) {
@@ -454,6 +568,7 @@ async function loadNotebooks() {
       state.activeNotebookSourceId = null;
       renderNotebook();
     }
+    if (state.results && state.view === "work") renderResults(state.results);
   } catch (err) {
     setEngine("Could not load notebooks: " + err.message);
   }
@@ -465,6 +580,7 @@ async function selectNotebook(id, announce = true) {
     const data = await fetch(`/api/notebooks/${encodeURIComponent(id)}`).then((r) => r.json());
     if (data.error) throw new Error(data.error);
     state.activeNotebook = data.notebook;
+    state.selectedSearchNotebookId = data.notebook.id;
     const sources = state.activeNotebook.sources || [];
     if (!sources.some((source) => source.id === state.activeNotebookSourceId)) {
       state.activeNotebookSourceId = sources[0]?.id || null;
@@ -484,7 +600,9 @@ function renderNotebook() {
   $("notebook-notes").hidden = empty;
   $("notebook-path-form").hidden = empty;
   $("source-new").hidden = empty;
+  $("source-import-new").hidden = empty;
   $("notebook-source-form").hidden = true;
+  $("notebook-import-form").hidden = true;
   $("notebook-note-form").hidden = true;
   $("notebook-path-empty").hidden = empty || Boolean(notebook.learning_path?.sections?.length);
   $("notebook-title").textContent = notebook?.title || "Choose a notebook";
@@ -520,7 +638,11 @@ function renderNotebook() {
     title.textContent = source.title;
     const meta = document.createElement("span");
     meta.className = "notebook-source-meta";
-    meta.textContent = source.kind || (source.url ? "linked source" : "local excerpt");
+    meta.textContent = [
+      source.kind,
+      source.origin === "import" ? "imported" : null,
+      source.url ? "linked source" : "local excerpt",
+    ].filter(Boolean).join(" · ");
     button.append(title, meta);
     button.onclick = () => { state.activeNotebookSourceId = source.id; renderNotebook(); };
     return button;
@@ -530,11 +652,30 @@ function renderNotebook() {
   if (active) {
     $("notebook-evidence").hidden = false;
     $("notebook-evidence-title").textContent = active.title;
-    $("notebook-evidence-meta").textContent = [active.kind, active.url ? "linked source" : "local excerpt"].filter(Boolean).join(" · ");
-    $("notebook-evidence-excerpt").textContent = active.excerpt;
+    $("notebook-evidence-meta").textContent = [
+      active.kind,
+      active.origin === "import" ? "imported source" : null,
+      active.url ? "linked source" : "local excerpt",
+    ].filter(Boolean).join(" · ");
+    $("notebook-evidence-excerpt").textContent = active.excerpt || "";
     const link = $("notebook-evidence-link");
     link.hidden = !active.url;
     if (active.url) link.href = active.url;
+    const citations = $("notebook-evidence-citations");
+    const items = (active.citations || []).map((citation) => {
+      const article = document.createElement("article");
+      article.className = "notebook-citation";
+      const label = document.createElement("span");
+      label.className = "notebook-citation-label";
+      label.textContent = citation.label || "document";
+      const text = document.createElement("p");
+      text.className = "notebook-citation-text";
+      text.textContent = citation.text || "";
+      article.append(label, text);
+      return article;
+    });
+    citations.hidden = items.length === 0;
+    citations.replaceChildren(...items);
   }
 
   const noteList = $("notebook-note-list");
@@ -574,8 +715,12 @@ function renderNotebook() {
   }
 }
 
-function showNotebookCreate() {
+function showNotebookCreate(prefill = null) {
   $("notebook-create").hidden = false;
+  if (prefill) {
+    $("notebook-name").value = prefill.title || "";
+    $("notebook-goal-input").value = prefill.goal || "";
+  }
   $("notebook-name").focus();
 }
 
@@ -596,7 +741,17 @@ async function createNotebook() {
   hideNotebookCreate();
   state.notebooks = [data.notebook, ...state.notebooks.filter((n) => n.id !== data.notebook.id)];
   await selectNotebook(data.notebook.id);
+  if (state.results && state.view === "work") renderResults(state.results);
   notifyWhenReady("Notebook ready", "Add a source, then build a path through it.");
+}
+
+function openSearchNotebookCreate(query) {
+  const draft = searchCapture().prefillNotebookDraft
+    ? searchCapture().prefillNotebookDraft(query)
+    : { title: query || "", goal: query || "" };
+  nav("notebook");
+  showNotebookCreate(draft);
+  setEngine("Create a notebook to capture this search");
 }
 
 function toggleNotebookForm(id, show) {
@@ -620,6 +775,42 @@ async function addNotebookSource(e) {
   await selectNotebook(state.activeNotebook.id);
   state.activeNotebookSourceId = data.source.id;
   renderNotebook();
+}
+
+async function importNotebookSource(e) {
+  e.preventDefault();
+  if (!state.activeNotebook) return;
+  const status = $("notebook-import-status");
+  const submit = $("import-submit");
+  const payload = {
+    url: $("import-url").value.trim(),
+    title: $("import-title").value.trim(),
+    kind: $("import-kind").value.trim(),
+  };
+  status.textContent = "Importing…";
+  submit.disabled = true;
+  try {
+    const data = await fetch(`/api/notebooks/${encodeURIComponent(state.activeNotebook.id)}/sources/import`, {
+      method: "POST", headers: notebookHeaders(), body: JSON.stringify(payload),
+    }).then((r) => r.json());
+    if (data.error) {
+      status.textContent = data.error;
+      return setEngine("Could not import source: " + data.error);
+    }
+    $("notebook-import-form").reset();
+    status.textContent = "";
+    toggleNotebookForm("notebook-import-form", false);
+    await selectNotebook(state.activeNotebook.id, false);
+    state.activeNotebookSourceId = data.source.id;
+    renderNotebook();
+    setEngine(`Imported to notebook: ${data.source.title}`);
+    notifyWhenReady("Source imported", "The page or PDF is ready in your notebook.");
+  } catch (err) {
+    status.textContent = err.message;
+    setEngine("Could not import source: " + err.message);
+  } finally {
+    submit.disabled = false;
+  }
 }
 
 async function addNotebookNote(e) {
@@ -655,7 +846,12 @@ function notebookContextText() {
   if (!notebook) return "";
   const chunks = [`Notebook: ${notebook.title}`, `Learning goal: ${notebook.goal || "not specified"}`];
   (notebook.sources || []).forEach((source, i) => {
-    chunks.push(`Source ${i + 1}: ${source.title}\n${(source.excerpt || "").slice(0, 7000)}`);
+    const lines = [`Source ${i + 1}: ${source.title}`];
+    if (source.excerpt) lines.push(`Excerpt:\n${(source.excerpt || "").slice(0, 5000)}`);
+    const citations = (source.citations || []).slice(0, 6).map((citation) =>
+      `${citation.label || "document"}: ${(citation.text || "").slice(0, 600)}`);
+    if (citations.length) lines.push(`Citations:\n${citations.join("\n")}`);
+    chunks.push(lines.join("\n"));
   });
   (notebook.notes || []).forEach((note, i) => {
     chunks.push(`Note ${i + 1}: ${note.title}\n${(note.body || "").slice(0, 5000)}`);
@@ -955,19 +1151,21 @@ async function ensureSession() {
   }).then((r) => r.json());
   if (res.error) throw new Error(res.error);
   state.sessionId = res.session_id;
+  updatePrivacyUi();
   return state.sessionId;
 }
 
 async function deleteCurrentSession() {
   const sessionId = state.sessionId;
   if (!sessionId) return true;
-  state.sessionId = null;
   try {
     const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
       method: "DELETE",
       headers: { "X-Celina-CSRF": csrfToken(), "Origin": window.location.origin },
     }).then((r) => r.json());
     if (res.error) throw new Error(res.error);
+    state.sessionId = null;
+    updatePrivacyUi();
     return true;
   } catch (err) {
     setEngine("Could not delete session: " + err.message);
@@ -987,7 +1185,8 @@ async function setIncognitoMode(e) {
     return;
   }
   state.incognito = requested;
-  setEngine(requested ? "Incognito on · session auto-deletes" : "Incognito off · sessions auto-delete after 24 hours");
+  setEngine(requested ? "Incognito on · session auto-deletes" : `Incognito off · ${sessionBadgeText()}`);
+  updatePrivacyUi();
 }
 
 async function startSearchRun(query, provider) {
@@ -1137,14 +1336,85 @@ function renderRun(run, query) {
   notifyWhenReady(`${n} source${n === 1 ? "" : "s"} found`, "Celina finished looking.", run.state === "completed" ? "active" : "attention");
 }
 
+function renderSearchNotebookControls(data) {
+  const bar = document.createElement("section");
+  bar.className = "results-toolbar";
+
+  const copy = document.createElement("div");
+  copy.className = "results-toolbar-copy";
+  copy.innerHTML = "<span class=\"eyebrow\">Notebook capture</span><p>Turn a search result into a bounded source you can study later.</p>";
+  bar.appendChild(copy);
+
+  const actions = document.createElement("div");
+  actions.className = "results-toolbar-actions";
+  if (!state.notebooks.length) {
+    const create = document.createElement("button");
+    create.type = "button";
+    create.className = "btn btn--ghost";
+    create.textContent = "Create notebook";
+    create.onclick = () => openSearchNotebookCreate(data.query || "");
+    actions.appendChild(create);
+  } else {
+    const label = document.createElement("label");
+    label.className = "results-notebook-select";
+    const span = document.createElement("span");
+    span.textContent = "Capture into";
+    const select = document.createElement("select");
+    state.notebooks.forEach((notebook) => {
+      const option = document.createElement("option");
+      option.value = notebook.id;
+      option.textContent = notebook.title;
+      option.selected = notebook.id === state.selectedSearchNotebookId;
+      select.appendChild(option);
+    });
+    select.onchange = () => {
+      state.selectedSearchNotebookId = select.value;
+      if (select.value && state.activeNotebook?.id !== select.value) selectNotebook(select.value, false);
+    };
+    label.append(span, select);
+    actions.appendChild(label);
+  }
+  bar.appendChild(actions);
+  return bar;
+}
+
+async function addSearchResultToNotebook(result) {
+  if (!state.notebooks.length || !state.selectedSearchNotebookId) {
+    openSearchNotebookCreate(state.results?.query || result.title || "");
+    return;
+  }
+  let payload;
+  try {
+    payload = searchCapture().buildSearchCapturePayload(result);
+  } catch (err) {
+    setEngine("Could not add source: " + err.message);
+    return;
+  }
+  const data = await fetch(`/api/notebooks/${encodeURIComponent(state.selectedSearchNotebookId)}/sources`, {
+    method: "POST",
+    headers: notebookHeaders(),
+    body: JSON.stringify(payload),
+  }).then((r) => r.json());
+  if (data.error) return setEngine("Could not add source: " + data.error);
+  await loadNotebooks();
+  await selectNotebook(state.selectedSearchNotebookId, false);
+  state.activeNotebookSourceId = data.source.id;
+  state.results.added_capture_keys[searchCapture().resultCaptureKey(result)] = true;
+  renderNotebook();
+  renderResults(state.results);
+  setEngine(`Added to notebook: ${state.activeNotebook?.title || state.selectedSearchNotebookId}`);
+}
+
 function renderResults(data) {
   state.viewing = null;
   state.activeFile = null;
   state.results = data;
+  state.results.added_capture_keys = state.results.added_capture_keys || {};
   $("save").disabled = false;
 
   const wrap = document.createElement("div");
   wrap.className = "results";
+  wrap.appendChild(renderSearchNotebookControls(data));
 
   const note = document.createElement("div");
   if (data.answer) {
@@ -1184,6 +1454,13 @@ function renderResults(data) {
       read.onclick = () => { $("url").value = readable; openUrl(); };
       actions.appendChild(read);
     }
+    const add = document.createElement("button");
+    add.className = "btn btn--ghost";
+    const added = Boolean(state.results.added_capture_keys[searchCapture().resultCaptureKey(r)]);
+    add.textContent = added ? "Added" : "Add to Notebook";
+    add.disabled = added;
+    add.onclick = () => { addSearchResultToNotebook(r); };
+    actions.appendChild(add);
     const link = r.url || r.oa_url;
     if (link) {
       const a = document.createElement("a");
@@ -1371,6 +1648,10 @@ $("go").onclick = openUrl;
 $("url").addEventListener("keydown", (e) => { if (e.key === "Enter") findPapers(); });
 $("save").onclick = saveCurrent;
 $("incognito-toggle").onchange = setIncognitoMode;
+$("session-delete").onclick = async () => {
+  const ok = await deleteCurrentSession();
+  if (ok) updatePrivacyUi();
+};
 $("example-q").onclick = () => { $("url").value = "does caffeine affect sleep?"; findPapers(); };
 $("refresh").onclick = loadFiles;
 $("project-select").onchange = (e) => { state.projectId = e.target.value; renderProjects(); };
@@ -1383,33 +1664,51 @@ $("notebook-select").onchange = (e) => selectNotebook(e.target.value);
 $("notebook-new").onclick = showNotebookCreate;
 $("notebook-empty-new").onclick = showNotebookCreate;
 $("notebook-create-cancel").onclick = hideNotebookCreate;
-$("notebook-create-save").onclick = createNotebook;
-$("notebook-name").addEventListener("keydown", (e) => { if (e.key === "Enter") createNotebook(); });
-$("source-new").onclick = () => toggleNotebookForm("notebook-source-form", true);
-$("source-cancel").onclick = () => toggleNotebookForm("notebook-source-form", false);
-$("notebook-source-form").addEventListener("submit", addNotebookSource);
-$("note-new").onclick = () => toggleNotebookForm("notebook-note-form", true);
-$("note-cancel").onclick = () => toggleNotebookForm("notebook-note-form", false);
-$("notebook-note-form").addEventListener("submit", addNotebookNote);
-$("notebook-path-form").addEventListener("submit", generateNotebookPath);
-$("composer").addEventListener("submit", send);
-$("clear").onclick = () => { state.history = []; $("log").innerHTML = ""; $("usage").textContent = ""; };
-$("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("composer").requestSubmit(); });
-$("mascot-notify").onclick = openMascotPanel;
-$("mascot-panel-close").onclick = closeMascotPanel;
-$("mascot-enable-notify").onclick = enableNotifications;
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.mascot.panelOpen) closeMascotPanel(); });
-document.addEventListener("click", (e) => {
-  if (state.mascot.panelOpen && !$("mascot").contains(e.target)) closeMascotPanel();
-});
-window.addEventListener("pagehide", () => {
-  if (!state.incognito || !state.sessionId) return;
-  fetch(`/api/sessions/${encodeURIComponent(state.sessionId)}`, {
-    method: "DELETE",
-    headers: { "X-Celina-CSRF": csrfToken(), "Origin": window.location.origin },
-    keepalive: true,
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    state,
+    retentionLabel,
+    sessionBadgeText,
+    sessionStateText,
+    deleteCurrentSession,
+    setIncognitoMode,
+    updatePrivacyUi,
+  };
+} else {
+  $("notebook-create-save").onclick = createNotebook;
+  $("notebook-name").addEventListener("keydown", (e) => { if (e.key === "Enter") createNotebook(); });
+  $("source-new").onclick = () => toggleNotebookForm("notebook-source-form", true);
+  $("source-import-new").onclick = () => toggleNotebookForm("notebook-import-form", true);
+  $("source-cancel").onclick = () => toggleNotebookForm("notebook-source-form", false);
+  $("import-cancel").onclick = () => {
+    $("notebook-import-status").textContent = "";
+    toggleNotebookForm("notebook-import-form", false);
+  };
+  $("notebook-source-form").addEventListener("submit", addNotebookSource);
+  $("notebook-import-form").addEventListener("submit", importNotebookSource);
+  $("note-new").onclick = () => toggleNotebookForm("notebook-note-form", true);
+  $("note-cancel").onclick = () => toggleNotebookForm("notebook-note-form", false);
+  $("notebook-note-form").addEventListener("submit", addNotebookNote);
+  $("notebook-path-form").addEventListener("submit", generateNotebookPath);
+  $("composer").addEventListener("submit", send);
+  $("clear").onclick = () => { state.history = []; $("log").innerHTML = ""; $("usage").textContent = ""; };
+  $("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("composer").requestSubmit(); });
+  $("mascot-notify").onclick = openMascotPanel;
+  $("mascot-panel-close").onclick = closeMascotPanel;
+  $("mascot-enable-notify").onclick = enableNotifications;
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.mascot.panelOpen) closeMascotPanel(); });
+  document.addEventListener("click", (e) => {
+    if (state.mascot.panelOpen && !$("mascot").contains(e.target)) closeMascotPanel();
   });
-});
-renderMascotPanel();
+  window.addEventListener("pagehide", () => {
+    if (!state.incognito || !state.sessionId) return;
+    fetch(`/api/sessions/${encodeURIComponent(state.sessionId)}`, {
+      method: "DELETE",
+      headers: { "X-Celina-CSRF": csrfToken(), "Origin": window.location.origin },
+      keepalive: true,
+    });
+  });
+  renderMascotPanel();
 
-boot();
+  boot();
+}

@@ -83,6 +83,18 @@ _SCRIPT_STYLE = re.compile(r"<(script|style|noscript)[^>]*>.*?</\1>", re.S | re.
 _TAG = re.compile(r"<[^>]+>")
 _BLANKS = re.compile(r"\n{3,}")
 
+# Matches pdf.py's own cap. A rendered page's extracted text is normally a
+# few thousand to a few tens of thousands of characters; a PDF-viewer page
+# that puts every page's text in the DOM (missed by _looks_like_pdf_url, or
+# any other DOM oddity) can otherwise return megabytes uncapped.
+_MAX_FETCHED_TEXT_CHARS = 600_000
+
+
+def _cap_fetched_text(text):
+    if len(text) <= _MAX_FETCHED_TEXT_CHARS:
+        return text
+    return text[:_MAX_FETCHED_TEXT_CHARS] + "\n\n[truncated for length]"
+
 
 def _readable(raw_html):
     """Strip a page down to something a model can actually read."""
@@ -153,10 +165,10 @@ def _plain_page(url, traffic_context=None, note=None):
         result = {
             "url": url,
             "engine": "plain",
-            "text": _readable(_decode_page_body(
+            "text": _cap_fetched_text(_readable(_decode_page_body(
                 response.body,
                 response.content_type,
-            )),
+            ))),
             "content_type": response.content_type,
         }
     if note:
@@ -282,8 +294,17 @@ def obscura_dump(
 
 
 def _looks_like_pdf_url(url):
-    path = urllib.parse.urlparse(url).path.lower()
-    return path.endswith(".pdf") or "/pdf/" in path
+    parsed = urllib.parse.urlparse(url)
+    path = parsed.path.lower()
+    if path.endswith(".pdf") or "/pdf/" in path:
+        return True
+    # Some publishers (e.g. EuropePMC's ?pdf=render) signal a PDF-viewer page
+    # only through a "pdf" query key, never the path - without this a viewer
+    # page gets browser-rendered instead of routed to the byte/pdf.py path,
+    # and a viewer that puts every page's text in the DOM for accessibility
+    # can dump megabytes of text through the stealth text-dump.
+    query_keys = {key.lower() for key in urllib.parse.parse_qs(parsed.query)}
+    return "pdf" in query_keys
 
 
 def _fetch_obscura_pdf(binary, url, timeout=40, traffic_context=None):
@@ -423,13 +444,13 @@ def fetch(url, traffic_context=None):
                 "url": url,
                 "engine": "obscura",
                 "note": "stealth",
-                "text": obscura_dump(
+                "text": _cap_fetched_text(obscura_dump(
                     url,
                     dump="text",
                     stealth=True,
                     traffic_context=traffic_context,
                     action_type="page.fetch",
-                ),
+                )),
                 "content_type": "text/plain",
             }
         except traffic.TrafficCancelled:

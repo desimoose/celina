@@ -217,5 +217,61 @@ class ObscuraTrafficTest(unittest.TestCase):
         self.assertNotIn(self.secret, record.error_summary)
 
 
+class LooksLikePdfUrlTest(unittest.TestCase):
+    def test_path_suffix_is_detected(self):
+        self.assertTrue(tools._looks_like_pdf_url("https://x.test/paper.pdf"))
+
+    def test_path_segment_is_detected(self):
+        self.assertTrue(tools._looks_like_pdf_url("https://x.test/pdf/12345"))
+
+    def test_pdf_query_key_is_detected(self):
+        # EuropePMC and similar publishers signal a PDF-viewer page only
+        # through a query key, e.g. https://europepmc.org/articles/PMC1?pdf=render
+        self.assertTrue(
+            tools._looks_like_pdf_url(
+                "https://europepmc.org/articles/PMC13278887?pdf=render"
+            )
+        )
+
+    def test_pdf_as_part_of_a_value_is_not_a_false_positive(self):
+        # A "pdf" substring inside some unrelated query value should not
+        # trip the heuristic - only a literal "pdf" query key does.
+        self.assertFalse(
+            tools._looks_like_pdf_url("https://x.test/article?ref=pdfsummary")
+        )
+
+    def test_ordinary_page_is_not_detected(self):
+        self.assertFalse(tools._looks_like_pdf_url("https://x.test/article?id=1"))
+
+
+class CapFetchedTextTest(unittest.TestCase):
+    def test_short_text_is_untouched(self):
+        self.assertEqual(tools._cap_fetched_text("short"), "short")
+
+    def test_oversized_text_is_capped_with_a_visible_note(self):
+        huge = "a" * (tools._MAX_FETCHED_TEXT_CHARS + 5000)
+
+        capped = tools._cap_fetched_text(huge)
+
+        self.assertLessEqual(
+            len(capped), tools._MAX_FETCHED_TEXT_CHARS + len("\n\n[truncated for length]")
+        )
+        self.assertTrue(capped.endswith("[truncated for length]"))
+
+
+class FetchAppliesTheTextCapTest(unittest.TestCase):
+    @mock.patch(
+        "tools.obscura_dump",
+        return_value="word " * 200000,  # ~1M characters, like the real case
+    )
+    @mock.patch("tools.find_obscura", return_value=r"C:\vendor\obscura.exe")
+    def test_obscura_stealth_text_dump_is_capped(self, _find, _dump):
+        page = tools.fetch("https://example.test/pdf-viewer-page")
+
+        self.assertEqual(page["engine"], "obscura")
+        self.assertLessEqual(len(page["text"]), tools._MAX_FETCHED_TEXT_CHARS + 40)
+        self.assertTrue(page["text"].endswith("[truncated for length]"))
+
+
 if __name__ == "__main__":
     unittest.main()

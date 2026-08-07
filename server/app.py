@@ -2,12 +2,16 @@
 
 Stdlib only. Serves the web UI and a small JSON API:
 
-  GET  /api/config           providers + tool availability
-  POST /api/chat             talk to any provider through the gateway
-  POST /api/fetch            fetch a page (via Obscura when present)
-  GET  /api/workspace        list notebook artifacts
-  GET  /api/workspace/file   read one artifact
-  POST /api/workspace/save   write an artifact
+  GET  /api/config                    providers + tool availability
+  POST /api/chat                      talk to any provider through the gateway
+  POST /api/fetch                     fetch a page (via Obscura when present)
+  GET  /api/workspace                 list notebook artifacts
+  GET  /api/workspace/file            read one artifact
+  POST /api/workspace/save            write an artifact
+  POST /api/search-runs               start a bounded, observable search run
+  GET  /api/search-runs/{id}          read run state
+  POST /api/search-runs/{id}/stop     cooperatively stop a run
+  GET  /api/search-runs/{id}/events   resumable live trace (SSE)
 
 Run:  python server/app.py     then open the exact loopback URL it prints
 """
@@ -26,10 +30,13 @@ import finder  # noqa: E402
 import events  # noqa: E402
 import gateway  # noqa: E402
 import local_security  # noqa: E402
+import orchestrator  # noqa: E402
 import paths  # noqa: E402
 import scanner  # noqa: E402
+import search_runtime  # noqa: E402
 import serialization  # noqa: E402
 import sessions  # noqa: E402
+import sse  # noqa: E402
 import tokens  # noqa: E402
 import tools  # noqa: E402
 
@@ -288,6 +295,9 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/sessions" or route.startswith("/api/sessions/"):
             return self._get_session_route(route)
 
+        if route.startswith("/api/search-runs/"):
+            return self._get_search_run_route(route)
+
         if route == "/api/config":
             return self._send(200, {
                 "providers": gateway.available(),
@@ -317,6 +327,8 @@ class Handler(BaseHTTPRequestHandler):
         route = parsed.path
         if route == "/api/sessions" or route.startswith("/api/sessions/"):
             return self._post_session_route(parsed)
+        if route == "/api/search-runs" or route.startswith("/api/search-runs/"):
+            return self._post_search_run_route(parsed)
         try:
             payload = self._read_json()
         except Exception:
@@ -440,6 +452,131 @@ class Handler(BaseHTTPRequestHandler):
             return self._not_found()
         self.server.recovery_required_session_ids.discard(session_id)
         return self._send(200, self._serialized_session(session))
+
+    def _get_search_run_route(self, route):
+        if not self._has_launch_cookie():
+            return self._forbidden()
+        prefix = "/api/search-runs/"
+        suffix = route[len(prefix):]
+        if not suffix:
+            return self._not_found()
+        parts = suffix.split("/")
+        run_id = parts[0]
+        if len(parts) == 1:
+            try:
+                run = self.server.search_runtime.get(run_id)
+            except KeyError:
+                return self._not_found()
+            return self._send(200, serialization.serialize_search_run(run))
+        if len(parts) == 2 and parts[1] == "events":
+            return self._stream_search_run_events(run_id)
+        return self._not_found()
+
+    def _post_search_run_route(self, parsed):
+        route = parsed.path
+        if route == "/api/search-runs":
+            if not self._allows_session_mutation(parsed.query):
+                self._discard_request_body()
+                return self._forbidden()
+            try:
+                payload = self._read_json()
+            except Exception:
+                return self._send(400, {"error": "invalid JSON body"})
+            return self._start_search_run(payload)
+
+        prefix = "/api/search-runs/"
+        suffix = route[len(prefix):]
+        if not suffix.endswith("/stop"):
+            self._discard_request_body()
+            return self._not_found()
+        run_id = suffix[:-len("/stop")]
+        if not self._allows_session_mutation(parsed.query):
+            self._discard_request_body()
+            return self._forbidden()
+        self._discard_request_body()
+        if not run_id or "/" in run_id:
+            return self._not_found()
+        try:
+            run = self.server.search_runtime.stop(run_id)
+        except KeyError:
+            return self._not_found()
+        return self._send(200, serialization.serialize_search_run(run))
+
+    def _start_search_run(self, payload):
+        if not isinstance(payload, dict):
+            return self._send(400, {"error": "invalid search-run request"})
+        session_id = payload.get("session_id")
+        query = payload.get("query")
+        provider = payload.get("provider") or "anthropic"
+        constraints = payload.get("constraints")
+        if constraints is None:
+            constraints = {}
+        if not isinstance(session_id, str) or not session_id:
+            return self._send(400, {"error": "session_id is required"})
+        if not isinstance(query, str) or not query.strip():
+            return self._send(400, {"error": "query is required"})
+        if not isinstance(provider, str):
+            return self._send(400, {"error": "provider must be a string"})
+        if not isinstance(constraints, dict):
+            return self._send(400, {"error": "constraints must be an object"})
+        try:
+            request = orchestrator.SearchRequest(
+                query=query,
+                provider=provider,
+                constraints=constraints,
+                session_id=session_id,
+            )
+        except ValueError as e:
+            return self._send(400, {"error": str(e)})
+        try:
+            run = self.server.search_runtime.start(request)
+        except KeyError:
+            return self._send(404, {"error": "unknown session"})
+        except RuntimeError:
+            return self._send(409, {
+                "error": "session already has an active search run"
+            })
+        return self._send(202, {
+            "run_id": run.run_id,
+            "session_id": run.session_id,
+            "state": run.state,
+            "events_url": "/api/search-runs/%s/events" % run.run_id,
+        })
+
+    def _stream_search_run_events(self, run_id):
+        try:
+            run = self.server.search_runtime.get(run_id)
+        except KeyError:
+            return self._not_found()
+        after_sequence = sse.last_event_id(self.headers)
+        subscription = self.server.event_bus.subscribe(
+            run.session_id, after_sequence
+        )
+        try:
+            self.send_response(200)
+            self.send_header(
+                "Content-Type", "text/event-stream; charset=utf-8"
+            )
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            while True:
+                event = subscription.get(timeout=sse.HEARTBEAT_INTERVAL)
+                if event is None:
+                    self.wfile.write(sse.format_heartbeat())
+                    self.wfile.flush()
+                    continue
+                if event.run_id != run_id:
+                    continue
+                self.wfile.write(sse.format_event(event))
+                self.wfile.flush()
+                if sse.is_terminal(event):
+                    return
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, OSError):
+            return
+        finally:
+            subscription.close()
 
     # --- handlers ------------------------------------------------------
     def _chat(self, payload):
@@ -586,6 +723,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, fh.read(), ctype)
 
 
+class Server(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        # A client closing an SSE stream (tab close, navigation, reconnect)
+        # aborts its connection routinely - keep the same terse line
+        # log_message uses instead of a stack trace on every disconnect.
+        sys.stderr.write("  local request completed\n")
+
+
 def _bound_origin(host, port):
     host = str(host)
     if ":" in host and not host.startswith("["):
@@ -601,11 +746,14 @@ def make_server(port=None, host="127.0.0.1", session_root=None):
     os.makedirs(paths.workspace_dir(), exist_ok=True)
     if port is None:
         port = int(os.environ.get("CELINA_PORT", "8765"))
-    server = ThreadingHTTPServer((host, port), Handler)
+    server = Server((host, port), Handler)
     bound_host, bound_port = server.server_address[:2]
     store = sessions.SessionStore(session_root)
     server.session_store = store
     server.event_bus = events.EventBus(store)
+    server.search_runtime = search_runtime.SearchRuntime(
+        server.event_bus, store
+    )
     server.local_security = local_security.LocalSecurity(
         _bound_origin(bound_host, bound_port)
     )

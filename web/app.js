@@ -12,11 +12,19 @@ const state = {
   viewing: null,       // { title, text } in the reader
   results: null,       // last search result (answer + sources)
   activeFile: null,
+  sessionId: null,      // local research session (created on first search)
+  activeRunId: null,    // the bounded search run currently streaming
+  eventSource: null,    // its live trace connection
 };
+
+const TERMINAL_RUN_KINDS = new Set([
+  "search.completed", "search.stopped", "search.failed",
+]);
 
 const escapeHtml = (s) =>
   (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const looksLikeUrl = (s) => /^https?:\/\//i.test(s);
+const csrfToken = () => document.querySelector('meta[name="celina-csrf"]')?.content || "";
 
 // ---------- boot ----------
 
@@ -327,29 +335,113 @@ async function openUrl() {
   }
 }
 
-// ---------- search (finder) ----------
+// ---------- search (bounded, observable search run over SSE) ----------
+
+async function ensureSession() {
+  if (state.sessionId) return state.sessionId;
+  const res = await fetch("/api/sessions", {
+    method: "POST",
+    headers: { "content-type": "application/json", "X-Celina-CSRF": csrfToken() },
+    body: JSON.stringify({ content_recording: true }),
+  }).then((r) => r.json());
+  if (res.error) throw new Error(res.error);
+  state.sessionId = res.session_id;
+  return state.sessionId;
+}
+
+async function startSearchRun(query, provider) {
+  const sessionId = await ensureSession();
+  const res = await fetch("/api/search-runs", {
+    method: "POST",
+    headers: { "content-type": "application/json", "X-Celina-CSRF": csrfToken() },
+    body: JSON.stringify({ session_id: sessionId, query, provider }),
+  }).then((r) => r.json());
+  if (res.error) throw new Error(res.error);
+  return res;
+}
 
 async function findPapers() {
   const q = $("url").value.trim();
   if (!q) return;
   if (looksLikeUrl(q)) return openUrl();
+  if (state.activeRunId) return;   // one bounded run at a time
   setEngine("Finding real sources…");
   $("find").disabled = true;
+  $("stop").hidden = false;
   try {
-    const data = await fetch("/api/explore", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ query: q, provider: state.provider }),
-    }).then((r) => r.json());
-    if (data.error) { setEngine("search failed: " + data.error); return; }
-    data.query = data.query || q;
-    renderResults(data);
-    const n = data.results.length;
-    setEngine(`${n} source${n === 1 ? "" : "s"} found`);
+    const started = await startSearchRun(q, state.provider);
+    state.activeRunId = started.run_id;
+    watchRun(started.run_id, started.events_url, q);
   } catch (e) {
     setEngine("search failed: " + e.message);
-  } finally {
     $("find").disabled = false;
+    $("stop").hidden = true;
   }
+}
+
+// Live trace: each SSE frame is one observable step ("Reading “X”.",
+// "Verified support for…") - shown as the current status line while it runs.
+function watchRun(runId, eventsUrl, query) {
+  if (state.eventSource) state.eventSource.close();
+  const source = new EventSource(eventsUrl);
+  state.eventSource = source;
+  source.addEventListener("trace", (e) => {
+    let payload;
+    try { payload = JSON.parse(e.data); } catch { return; }
+    setEngine(payload.summary || "");
+    if (TERMINAL_RUN_KINDS.has(payload.kind)) finishRun(runId, query);
+  });
+}
+
+async function stopActiveRun() {
+  if (!state.activeRunId) return;
+  try {
+    await fetch(`/api/search-runs/${state.activeRunId}/stop`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "X-Celina-CSRF": csrfToken() },
+      body: "{}",
+    });
+  } catch { /* the trace stream still delivers the terminal event */ }
+}
+
+async function finishRun(runId, query) {
+  if (state.eventSource) { state.eventSource.close(); state.eventSource = null; }
+  state.activeRunId = null;
+  $("find").disabled = false;
+  $("stop").hidden = true;
+  try {
+    const run = await fetch(`/api/search-runs/${runId}`).then((r) => r.json());
+    renderRun(run, query);
+  } catch (e) {
+    setEngine("search failed: " + e.message);
+  }
+}
+
+// Adapt a serialized search run onto the shape renderResults already knows.
+function renderRun(run, query) {
+  const data = {
+    query: run.query || query,
+    provider: state.provider,
+    model: "",
+    results: (run.candidates || []).map((c) => ({
+      title: c.title,
+      url: c.url,
+      oa_url: c.open_access ? c.url : null,
+      kind: c.source_kind,
+      authors: c.authors,
+      year: (c.published_at || "").slice(0, 4) || null,
+      snippet: c.snippet,
+      abstract: c.snippet,
+    })),
+  };
+  if (run.answer) data.answer = run.answer.answer;
+  if (run.state !== "completed") {
+    data.answer_error = run.state === "stopped"
+      ? "the search was stopped" : "the search failed";
+  }
+  renderResults(data);
+  const n = data.results.length;
+  setEngine(`${n} source${n === 1 ? "" : "s"} found`);
 }
 
 function renderResults(data) {
@@ -506,6 +598,7 @@ async function send(e) {
 // ---------- wiring ----------
 
 $("find").onclick = findPapers;
+$("stop").onclick = stopActiveRun;
 $("go").onclick = openUrl;
 $("url").addEventListener("keydown", (e) => { if (e.key === "Enter") findPapers(); });
 $("save").onclick = saveCurrent;

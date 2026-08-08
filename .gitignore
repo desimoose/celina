@@ -41,3 +41,6 @@ desktop.ini
 # runtime debug output
 server-debug.log
 *.log
+
+# local mutation idempotency state
+*.sqlite3

@@ -115,10 +115,13 @@ provider destinations.
 
 The health request is a passive local inspection. It does not probe a provider,
 fetch a URL, run a tool, write an event or telemetry file, or update usage
-records. Consequently, `ready` means locally configured, not that a remote
-provider is reachable. Provider and search requests have bounded external
-timeouts, observe cooperative cancellation between phases, isolate failed
-sources, and return bounded error classes/summaries without raw upstream text.
+records. The update-check route is also local-only and returns
+`remote_check: false`; Celina makes no automatic GitHub or other release
+service request. Consequently, `ready` means locally configured, not that a
+remote provider is reachable. Provider and search requests have bounded
+external timeouts, observe cooperative cancellation between phases, isolate
+failed sources, and return bounded error classes/summaries without raw
+upstream text.
 Celina still cannot forcibly interrupt an operating-system network call before
 its timeout expires.
 

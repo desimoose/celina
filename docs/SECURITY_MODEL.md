@@ -101,13 +101,14 @@ deliberately keep.
 
 ## Review record and residual risks
 
-| Feature | Assets | Security/reliability invariant | Control | Residual risk |
-| --- | --- | --- | --- | --- |
-| Public research fetch | Network, local parser | `URL_PUBLIC_ONLY`, `BOUNDED_MUTATION` | Validate each target and cap response/extraction | DNS and OS networking are outside Celina's full control |
-| Tutor context | Questions, source text, keys | `UNTRUSTED_SOURCE_DATA`, `NO_SECRET_OUTPUT` | Label evidence, keep system instructions separate, bound context | A provider can retain or mishandle data it receives |
-| Notebook/project writes | Kept work | `ATOMIC_LOCAL_STATE`, `BOUNDED_MUTATION` | Root-bound, atomic local writes and recovery guidance | Hardware/filesystem failure can still destroy data |
-| Session privacy | Temporary traffic | `EPHEMERAL_INCOGNITO` | Delete local session records; audit directory, ledger, SQLite row, and sidecars; retain a metadata-only retry marker on incomplete cleanup | Notebook files remain kept work; provider/site/server OS logs and backups may remain outside Celina |
-| Release artifacts | Code and bundled tools | `NO_TELEMETRY`, `NO_SECRET_OUTPUT` | Review, tests, hashes, and release checks | A compromised build environment remains a supply-chain risk |
+| Feature | Assets | Security/reliability invariant | Control | Status | Residual risk |
+| --- | --- | --- | --- | --- | --- |
+| Public research fetch | Network, local parser | `URL_PUBLIC_ONLY`, `BOUNDED_MUTATION` | Validate each target and cap response/extraction | mitigated | DNS rebinding and OS networking remain outside Celina's full control |
+| Tutor context | Questions, source text, keys | `UNTRUSTED_SOURCE_DATA`, `NO_SECRET_OUTPUT` | Label evidence, keep system instructions separate, bound context | mitigated | A provider can retain or mishandle data it receives |
+| Notebook/project writes | Kept work | `ATOMIC_LOCAL_STATE`, `BOUNDED_MUTATION` | Root-bound, atomic local writes and recovery guidance | mitigated | Hardware/filesystem failure can still destroy data |
+| Session privacy | Temporary traffic | `EPHEMERAL_INCOGNITO` | Delete local session records; audit directory, ledger, SQLite row, and sidecars; retain a metadata-only retry marker on incomplete cleanup | mitigated | Notebook files remain kept work; provider/site/server OS logs and backups may remain outside Celina |
+| Update checks | Product metadata, network | `NO_TELEMETRY` | Version route is local-only; automatic remote update checks and browser calls are disabled | mitigated | Users must obtain and verify updates through their chosen distribution channel |
+| Release artifacts | Code and bundled tools | `NO_TELEMETRY`, `NO_SECRET_OUTPUT` | Review, tests, hashes, and release checks | mitigated | A compromised build environment remains a supply-chain risk |
 
 ## Verification
 

@@ -295,6 +295,47 @@ class NotebooksTest(unittest.TestCase):
         self.assertEqual(citations[0]["title"], "Paper")
         self.assertNotIn("text", citations[0])
 
+    def test_delete_all_notebooks_returns_count_and_removes_files(self):
+        first = self.notebooks.create_notebook("First notebook")
+        second = self.notebooks.create_notebook("Second notebook")
+
+        deleted = self.notebooks.delete_all_notebooks()
+
+        self.assertEqual(deleted, 2)
+        self.assertEqual(self.notebooks.list_notebooks(), [])
+        self.assertFalse(os.path.exists(os.path.join(
+            self.data_root, "workspace", "notebooks", f"{first['id']}.json"
+        )))
+        self.assertFalse(os.path.exists(os.path.join(
+            self.data_root, "workspace", "notebooks", f"{second['id']}.json"
+        )))
+
+    def test_normalize_study_set_bounds_items_and_filters_unknown_citations(self):
+        notebook = self.notebooks.create_notebook("Study normalization")
+        self.notebooks.add_source(
+            notebook["id"],
+            {"title": "Source", "excerpt": "Bounded evidence."},
+        )
+        raw = {
+            "mode": "flashcards",
+            "items": [
+                {
+                    "front": "Known",
+                    "back": "Answer " + ("x" * 2000),
+                    "citation_ids": ["source-1-doc", "invented"],
+                }
+                for _ in range(20)
+            ],
+        }
+
+        normalized = self.notebooks.normalize_study_set(
+            raw, "flashcards", 5, notebook["id"]
+        )
+
+        self.assertEqual(len(normalized["items"]), 5)
+        self.assertLessEqual(len(normalized["items"][0]["back"]), 1200)
+        self.assertEqual(normalized["items"][0]["citation_ids"], ["source-1-doc"])
+
     def test_store_uses_workspace_notebooks_files(self):
         notebook = self.notebooks.create_notebook("My notebook")
         target = os.path.join(self.data_root, "workspace", "notebooks", f"{notebook['id']}.json")

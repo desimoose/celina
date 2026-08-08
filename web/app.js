@@ -18,6 +18,7 @@ const state = {
   activeNotebook: null,
   activeNotebookSourceId: null,
   selectedSearchNotebookId: "",
+  studySet: null,
   outputFormat: "markdown",
   sessionRetentionSeconds: 86400,
   providerPrivacy: {},
@@ -347,6 +348,14 @@ async function openSettings() {
       <div class="set-label">Finder contact email</div>
       <input type="text" id="set-finder" placeholder="you@example.com"
              value="${escapeHtml(data.finder_email || "")}" />
+    </div>
+    <div class="set-row">
+      <div class="set-label">Notebook data</div>
+      <div class="set-inline">
+        <button type="button" class="btn btn--ghost" id="set-export-notebooks">Export notebooks</button>
+        <button type="button" class="set-delete" id="set-delete-notebooks">Delete all notebooks</button>
+      </div>
+      <div class="set-help">Exports or deletes Celina learning notebooks only. Search sessions, provider keys, and external provider data are not included.</div>
     </div>`;
   const sp = $("set-provider");
   if (sp) sp.addEventListener("change", () => { state.provider = sp.value; state.providerManual = true; updatePrivacyUi(); });
@@ -358,6 +367,14 @@ async function openSettings() {
     const ok = await deleteCurrentSession();
     if (ok) updatePrivacyUi();
     $("settings-msg").textContent = ok ? "Current session deleted." : $("settings-msg").textContent;
+  });
+  $("set-export-notebooks").addEventListener("click", exportNotebooks);
+  $("set-delete-notebooks").addEventListener("click", async () => {
+    const ok = await deleteAllNotebooks();
+    if (ok) {
+      $("settings-msg").textContent = "All notebooks deleted.";
+      closeSettings();
+    }
   });
   settingsInitial = { finder: data.finder_email || "", sessionRetentionSeconds: data.session_retention_seconds ?? 86400 };
   for (const btn of document.querySelectorAll("#settings-body .set-clear")) {
@@ -580,6 +597,7 @@ async function selectNotebook(id, announce = true) {
     const data = await fetch(`/api/notebooks/${encodeURIComponent(id)}`).then((r) => r.json());
     if (data.error) throw new Error(data.error);
     state.activeNotebook = data.notebook;
+    state.studySet = null;
     state.selectedSearchNotebookId = data.notebook.id;
     const sources = state.activeNotebook.sources || [];
     if (!sources.some((source) => source.id === state.activeNotebookSourceId)) {
@@ -598,6 +616,7 @@ function renderNotebook() {
   $("notebook-empty").hidden = !empty;
   $("notebook-evidence").hidden = empty || !(notebook.sources || []).length;
   $("notebook-notes").hidden = empty;
+  $("notebook-study").hidden = empty;
   $("notebook-path-form").hidden = empty;
   $("source-new").hidden = empty;
   $("source-import-new").hidden = empty;
@@ -713,6 +732,40 @@ function renderNotebook() {
     $("path-depth").value = path.depth || "college";
     $("path-goal").value = path.goal || "";
   }
+  renderStudySet();
+}
+
+function renderStudySet() {
+  const list = $("study-list");
+  if (!list) return;
+  list.replaceChildren();
+  const studySet = state.studySet;
+  if (!studySet) return;
+  (studySet.items || []).forEach((item, index) => {
+    const article = document.createElement("article");
+    article.className = "notebook-study-card";
+    const number = document.createElement("span");
+    number.className = "notebook-study-number";
+    number.textContent = String(index + 1).padStart(2, "0");
+    const prompt = document.createElement("h4");
+    prompt.textContent = studySet.mode === "quiz" ? item.question : item.front;
+    const answer = document.createElement("p");
+    answer.textContent = studySet.mode === "quiz" ? item.answer : item.back;
+    if (studySet.mode === "quiz") {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = "Reveal answer";
+      details.append(summary, answer);
+      article.append(number, prompt, details);
+    } else {
+      article.append(number, prompt, answer);
+    }
+    const citations = document.createElement("small");
+    citations.className = "notebook-study-citations";
+    citations.textContent = (item.citation_ids || []).join(" · ");
+    if (citations.textContent) article.appendChild(citations);
+    list.appendChild(article);
+  });
 }
 
 function showNotebookCreate(prefill = null) {
@@ -839,6 +892,74 @@ async function generateNotebookPath(e) {
   state.activeNotebook.learning_path = data.learning_path;
   renderNotebook();
   setEngine("Learning path ready");
+}
+
+async function generateStudySet() {
+  if (!state.activeNotebook) return;
+  const status = $("study-status");
+  const button = $("study-generate");
+  status.textContent = "Generating practice…";
+  button.disabled = true;
+  try {
+    const data = await fetch(
+      "/api/notebooks/" + encodeURIComponent(state.activeNotebook.id) + "/study-set",
+      {
+        method: "POST",
+        headers: notebookHeaders(),
+        body: JSON.stringify({
+          provider: state.provider,
+          mode: $("study-mode").value,
+          count: Number($("study-count").value),
+        }),
+      },
+    ).then((r) => r.json());
+    if (data.error) throw new Error(data.error);
+    state.studySet = data.study_set;
+    status.textContent = String(data.study_set.items.length) + " items ready";
+    renderStudySet();
+  } catch (err) {
+    status.textContent = err.message;
+    setEngine("Could not generate study set: " + err.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function exportNotebooks() {
+  try {
+    const response = await fetch("/api/notebooks/export");
+    const data = await response.json();
+    if (data.error) throw new Error(data.error);
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "celina-notebooks.json";
+    link.click();
+    URL.revokeObjectURL(link.href);
+    $("settings-msg").textContent = "Notebook export downloaded.";
+  } catch (err) {
+    $("settings-msg").textContent = "Could not export notebooks: " + err.message;
+  }
+}
+
+async function deleteAllNotebooks() {
+  if (!window.confirm("Delete all notebooks and saved learning notes from this machine?")) return false;
+  try {
+    const data = await fetch("/api/notebooks", {
+      method: "DELETE",
+      headers: notebookHeaders(),
+    }).then((r) => r.json());
+    if (data.error) throw new Error(data.error);
+    state.notebooks = [];
+    state.activeNotebook = null;
+    state.activeNotebookSourceId = null;
+    state.studySet = null;
+    renderNotebook();
+    return true;
+  } catch (err) {
+    $("settings-msg").textContent = "Could not delete notebooks: " + err.message;
+    return false;
+  }
 }
 
 function notebookContextText() {
@@ -1622,7 +1743,11 @@ async function send(e) {
       ? `/api/notebooks/${encodeURIComponent(state.activeNotebook.id)}/tutor`
       : "/api/chat";
     const body = notebookTutor
-      ? { provider: state.provider, question: text }
+      ? {
+        provider: state.provider,
+        question: text,
+        history: state.history.slice(0, -1).slice(-12),
+      }
       : { provider: state.provider, messages: state.history, context: contextText() };
     const res = await fetch(endpoint, {
       method: "POST",
@@ -1701,6 +1826,8 @@ if (typeof module !== "undefined" && module.exports) {
     deleteCurrentSession,
     setIncognitoMode,
     updatePrivacyUi,
+    exportNotebooks,
+    deleteAllNotebooks,
   };
 } else {
   $("notebook-create-save").onclick = createNotebook;
@@ -1718,6 +1845,7 @@ if (typeof module !== "undefined" && module.exports) {
   $("note-cancel").onclick = () => toggleNotebookForm("notebook-note-form", false);
   $("notebook-note-form").addEventListener("submit", addNotebookNote);
   $("notebook-path-form").addEventListener("submit", generateNotebookPath);
+  $("study-generate").addEventListener("click", generateStudySet);
   $("composer").addEventListener("submit", send);
   $("clear").onclick = () => { state.history = []; $("log").innerHTML = ""; $("usage").textContent = ""; };
   $("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("composer").requestSubmit(); });

@@ -326,6 +326,16 @@ h1, h2 { font-weight: 800; letter-spacing: -.03em; }
 .notebook-note h4 { margin: 0 0 5px; font-size: 14px; }
 .notebook-note p { margin: 0; color: var(--graphite); white-space: pre-wrap; font-size: 13px; line-height: 1.55; }
 .notebook-note-meta { display: block; margin-top: 8px; color: var(--smoke); font-family: var(--mono); font-size: 10px; }
+.notebook-study { max-width: 780px; margin-top: 32px; padding-top: 22px; border-top: 1px solid var(--ash); }
+.notebook-study-controls { display: flex; align-items: center; gap: 6px; }
+.notebook-study-controls select { padding: 7px 8px; border: 0; border-radius: var(--radius); background: var(--white); color: var(--ink); font: inherit; font-size: 11px; box-shadow: var(--inset-ash); }
+.notebook-study-list { display: grid; gap: 10px; margin-top: 12px; }
+.notebook-study-card { position: relative; padding: 14px 16px 14px 42px; border-radius: var(--radius); background: var(--white); box-shadow: var(--inset-ash); }
+.notebook-study-number { position: absolute; top: 15px; left: 15px; color: var(--ember-text); font-family: var(--mono); font-size: 10px; font-weight: 800; }
+.notebook-study-card h4 { margin: 0 0 7px; font-size: 14px; line-height: 1.35; }
+.notebook-study-card p { margin: 0; color: var(--graphite); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.notebook-study-card summary { color: var(--ember-text); cursor: pointer; font-size: 12px; font-weight: 700; }
+.notebook-study-citations { display: block; margin-top: 10px; color: var(--smoke); font-family: var(--mono); font-size: 10px; }
 .notebook-path-form { display: flex; flex-direction: column; gap: 10px; padding-bottom: 18px; border-bottom: 1px solid var(--ash); }
 .notebook-path { display: flex; flex-direction: column; gap: 20px; margin-top: 20px; }
 .notebook-path-section { position: relative; padding-left: 16px; border-left: 2px solid var(--ash); }

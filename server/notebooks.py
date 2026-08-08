@@ -22,6 +22,9 @@ _IMPORT_CITATION_TEXT_LIMIT = 2000
 _ORIGIN_LIMIT = 32
 _TUTOR_CONTEXT_LIMIT = 40000
 _TUTOR_CONTEXT_CITATIONS_PER_SOURCE = 6
+_STUDY_ITEM_LIMIT = 12
+_STUDY_TEXT_LIMIT = 1200
+_STUDY_CITATION_LIMIT = 6
 _PATH_DEPTHS = {"survey", "college", "graduate"}
 
 
@@ -240,6 +243,30 @@ def list_notebooks():
             continue
     result.sort(key=lambda item: (item.get("updated_at", ""), item.get("id", "")), reverse=True)
     return result
+
+
+def export_notebooks():
+    """Return the local learning data without provider or session secrets."""
+    return {
+        "version": 1,
+        "exported_at": _now(),
+        "notebooks": list_notebooks(),
+    }
+
+
+def delete_all_notebooks():
+    """Delete notebook JSON files and return the number removed."""
+    root = _workspace_root()
+    deleted = 0
+    for filename in os.listdir(root):
+        if not filename.endswith(".json") or not _SAFE_ID.fullmatch(filename[:-5]):
+            continue
+        path = os.path.join(root, filename)
+        if not os.path.isfile(path):
+            continue
+        os.remove(path)
+        deleted += 1
+    return deleted
 
 
 def create_notebook(title, goal=""):
@@ -539,3 +566,48 @@ def tutor_citations(notebook_or_id):
             if len(citations) >= 40:
                 return citations
     return citations
+
+
+def normalize_study_set(value, mode, count, notebook_or_id):
+    """Validate and bound provider-generated flashcards or quiz items."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("provider returned invalid study set JSON") from exc
+    if not isinstance(value, dict) or value.get("mode") != mode:
+        raise ValueError("provider returned an invalid study set")
+    items = value.get("items")
+    if not isinstance(items, list):
+        raise ValueError("study set items must be a list")
+    valid_citations = {
+        item["citation_id"] for item in tutor_citations(notebook_or_id)
+        if item.get("citation_id")
+    }
+    normalized = []
+    for raw in items[: min(count, _STUDY_ITEM_LIMIT)]:
+        if not isinstance(raw, dict):
+            continue
+        if mode == "flashcards":
+            front = _truncate(raw.get("front"), _STUDY_TEXT_LIMIT)
+            back = _truncate(raw.get("back"), _STUDY_TEXT_LIMIT)
+            if not front or not back:
+                continue
+            item = {"front": front, "back": back}
+        else:
+            question = _truncate(raw.get("question"), _STUDY_TEXT_LIMIT)
+            answer = _truncate(raw.get("answer"), _STUDY_TEXT_LIMIT)
+            if not question or not answer:
+                continue
+            item = {"question": question, "answer": answer}
+        citation_ids = raw.get("citation_ids") or []
+        if not isinstance(citation_ids, list):
+            citation_ids = []
+        item["citation_ids"] = [
+            citation_id for citation_id in citation_ids[:_STUDY_CITATION_LIMIT]
+            if isinstance(citation_id, str) and citation_id in valid_citations
+        ]
+        normalized.append(item)
+    if not normalized:
+        raise ValueError("provider returned no usable study items")
+    return {"mode": mode, "items": normalized}

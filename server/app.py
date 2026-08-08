@@ -371,6 +371,15 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/update-check":
             return self._send(200, update_check.check())
 
+        if route == "/api/notebooks/export":
+            if not self._has_launch_cookie():
+                return self._forbidden()
+            return self._send(
+                200,
+                notebooks.export_notebooks(),
+                headers={"Content-Disposition": "attachment; filename=celina-notebooks.json"},
+            )
+
         if route == "/api/notebooks" or route.startswith("/api/notebooks/"):
             return self._get_notebook_route(route)
 
@@ -467,6 +476,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         parsed = urllib.parse.urlparse(self.path)
         route = parsed.path
+        if route == "/api/notebooks":
+            if not self._allows_session_mutation(parsed.query):
+                self._discard_request_body()
+                return self._forbidden()
+            try:
+                deleted = notebooks.delete_all_notebooks()
+            except OSError as exc:
+                return self._send(500, {"error": str(exc)})
+            return self._send(200, {"deleted": deleted})
         prefix = "/api/sessions/"
         if not route.startswith(prefix):
             return self._not_found()
@@ -715,6 +733,9 @@ class Handler(BaseHTTPRequestHandler):
             if parts[1] == "tutor" and len(parts) == 2:
                 result = self._notebook_tutor(notebook_id, payload)
                 return self._send(200, result)
+            if parts[1] == "study-set" and len(parts) == 2:
+                result = self._notebook_study_set(notebook_id, payload)
+                return self._send(200, result)
         except ValueError as e:
             return self._send(400, {"error": str(e)})
         except OSError as e:
@@ -823,6 +844,18 @@ class Handler(BaseHTTPRequestHandler):
         question = self._notebook_request_value(
             payload, "question", limit=2000
         )
+        history = payload.get("history") or []
+        if not isinstance(history, list):
+            raise ValueError("history must be a list")
+        messages = []
+        for item in history[-12:]:
+            if not isinstance(item, dict) or item.get("role") not in {"user", "assistant"}:
+                raise ValueError("history contains an invalid message")
+            messages.append({
+                "role": item["role"],
+                "content": self._notebook_request_value(item, "content", limit=2000),
+            })
+        messages.append({"role": "user", "content": question})
         notebook = notebooks.read_notebook(notebook_id)
         context = notebooks.build_tutor_context(notebook)
         system = (
@@ -836,11 +869,47 @@ class Handler(BaseHTTPRequestHandler):
         )
         result = gateway.chat(
             provider,
-            [{"role": "user", "content": question}],
+            messages,
             system=system[:_CHAT_SYSTEM_LIMIT],
         )
         result = dict(result)
         result["citations"] = notebooks.tutor_citations(notebook)
+        return result
+
+    def _notebook_study_set(self, notebook_id, payload):
+        provider = payload.get("provider") or "anthropic"
+        if not isinstance(provider, str) or not provider.strip():
+            raise ValueError("provider must be a string")
+        mode = payload.get("mode") or "flashcards"
+        if mode not in {"flashcards", "quiz"}:
+            raise ValueError("mode must be flashcards or quiz")
+        count = payload.get("count", 5)
+        if (
+            isinstance(count, bool)
+            or not isinstance(count, int)
+            or not 1 <= count <= notebooks._STUDY_ITEM_LIMIT
+        ):
+            raise ValueError("count must be between 1 and 12")
+        notebook = notebooks.read_notebook(notebook_id)
+        system = (
+            SYSTEM_PROMPT
+            + "\n\nYou are Celina's study-set generator. Create exactly valid JSON with no "
+            "markdown fences. Use only the notebook context. Return an object shaped "
+            f'{{"mode":"{mode}","items":[...]}}. For flashcards each item has '
+            '"front", "back", and "citation_ids". For quiz each item has "question", '
+            '"answer", and "citation_ids". Citation IDs must be copied exactly from '
+            "the context; never invent them.\n\nNotebook context:\n"
+            + notebooks.build_tutor_context(notebook)
+        )
+        result = gateway.chat(
+            provider,
+            [{"role": "user", "content": f"Create {count} {mode} items."}],
+            system=system[:_CHAT_SYSTEM_LIMIT],
+        )
+        result = dict(result)
+        result["study_set"] = notebooks.normalize_study_set(
+            result.get("text", ""), mode, count, notebook
+        )
         return result
 
     def _start_search_run(self, payload):

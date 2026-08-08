@@ -273,6 +273,91 @@ class NotebookApiTest(unittest.TestCase):
         self.assertIn("Notebook: Tutor API", chat.call_args.kwargs["system"])
         self.assertIn("[source-1-doc]", chat.call_args.kwargs["system"])
 
+    @mock.patch.object(app.gateway, "chat")
+    def test_notebook_tutor_sends_bounded_conversation_history(self, chat):
+        _created, cookie, csrf = self._create_notebook("Tutor history", "Learn the topic")
+        chat.return_value = {"text": "Follow-up answer", "provider": "ollama"}
+        history = [
+            {"role": "user" if index % 2 == 0 else "assistant", "content": f"turn-{index}"}
+            for index in range(20)
+        ]
+
+        status, _headers, body = self._request(
+            "POST",
+            "/api/notebooks/tutor-history/tutor",
+            {"provider": "ollama", "question": "What follows?", "history": history},
+            self._mutation_headers(cookie, csrf),
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["text"], "Follow-up answer")
+        messages = chat.call_args.args[1]
+        self.assertEqual(len(messages), 13)
+        self.assertEqual(messages[-1], {"role": "user", "content": "What follows?"})
+        self.assertEqual(messages[0]["content"], "turn-8")
+
+    @mock.patch.object(app.gateway, "chat")
+    def test_notebook_study_set_returns_structured_cited_items(self, chat):
+        _created, cookie, csrf = self._create_notebook("Study set", "Learn attention")
+        source_status, _headers, _body = self._request(
+            "POST",
+            "/api/notebooks/study-set/sources",
+            {
+                "title": "Attention source",
+                "url": "https://example.com/attention",
+                "kind": "paper",
+                "excerpt": "Queries map to key-value pairs.",
+            },
+            self._mutation_headers(cookie, csrf),
+        )
+        self.assertEqual(source_status, 201)
+        chat.return_value = {
+            "text": json.dumps({
+                "mode": "flashcards",
+                "items": [{
+                    "front": "What does attention map?",
+                    "back": "Queries to key-value pairs.",
+                    "citation_ids": ["source-1-doc"],
+                }],
+            }),
+            "provider": "ollama",
+        }
+
+        status, _headers, body = self._request(
+            "POST",
+            "/api/notebooks/study-set/study-set",
+            {"provider": "ollama", "mode": "flashcards", "count": 3},
+            self._mutation_headers(cookie, csrf),
+        )
+
+        self.assertEqual(status, 200)
+        response = json.loads(body)
+        self.assertEqual(response["study_set"]["mode"], "flashcards")
+        self.assertEqual(response["study_set"]["items"][0]["citation_ids"], ["source-1-doc"])
+        self.assertIn("Study set", chat.call_args.kwargs["system"])
+
+    def test_notebook_export_and_delete_all_learning_data(self):
+        _first, cookie, csrf = self._create_notebook("Export one", "Goal one")
+        self._create_notebook("Export two", "Goal two")
+
+        status, headers, body = self._request(
+            "GET", "/api/notebooks/export", headers={"Cookie": cookie}
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("attachment", headers.get("Content-Disposition", ""))
+        self.assertEqual(len(json.loads(body)["notebooks"]), 2)
+
+        status, _headers, body = self._request(
+            "DELETE", "/api/notebooks", headers=self._mutation_headers(cookie, csrf)
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"deleted": 2})
+        listed, _headers, body = self._request(
+            "GET", "/api/notebooks", headers={"Cookie": cookie}
+        )
+        self.assertEqual(listed, 200)
+        self.assertEqual(json.loads(body), {"notebooks": []})
+
     def test_notebook_source_route_accepts_search_capture_metadata(self):
         created, cookie, csrf = self._create_notebook()
 

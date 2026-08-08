@@ -207,6 +207,25 @@
             </form>
             <div id="notebook-note-list" class="notebook-note-list"></div>
           </section>
+          <section id="notebook-study" class="notebook-study" hidden aria-label="Study practice">
+            <div class="notebook-section-head">
+              <div><span class="eyebrow">Practice</span><h3>Turn reading into recall</h3></div>
+              <div class="notebook-study-controls">
+                <select id="study-mode" aria-label="Study set type">
+                  <option value="flashcards">Flashcards</option>
+                  <option value="quiz">Practice quiz</option>
+                </select>
+                <select id="study-count" aria-label="Study set size">
+                  <option value="3">3 items</option>
+                  <option value="5" selected>5 items</option>
+                  <option value="8">8 items</option>
+                </select>
+                <button id="study-generate" class="btn btn--primary" type="button">Generate</button>
+              </div>
+            </div>
+            <p id="study-status" class="notebook-form-status" aria-live="polite"></p>
+            <div id="study-list" class="notebook-study-list"></div>
+          </section>
         </div>
 
         <aside class="notebook-inspector" aria-label="Learning path">

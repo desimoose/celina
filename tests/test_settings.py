@@ -133,6 +133,12 @@ class SettingsUiSourceTest(unittest.TestCase):
         self.assertIn('Incognito — deletes on end', js)
         self.assertIn('Auto-delete after 24 hours', js)
         self.assertIn('Delete current session', js)
+        self.assertIn('/api/notebooks/export', js)
+        self.assertIn('method: "DELETE"', js)
+        self.assertIn('fetch("/api/notebooks"', js)
+        self.assertIn('history: state.history.slice(0, -1)', js)
+        self.assertIn('/study-set', js)
+        self.assertIn('study-mode', html)
         self.assertIn('session-badge', html)
 
 

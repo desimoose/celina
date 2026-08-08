@@ -32,6 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import finder  # noqa: E402
+import diagnostics  # noqa: E402
 import events  # noqa: E402
 import gateway  # noqa: E402
 import local_security  # noqa: E402
@@ -445,6 +446,17 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         route = parsed.path
+
+        if route == "/api/health":
+            if not diagnostics.is_loopback(self.server, self.client_address):
+                return self._not_found()
+            if not self._has_launch_cookie():
+                return self._forbidden()
+            return self._send(
+                200,
+                diagnostics.health(self.server),
+                headers={"Cache-Control": "no-store"},
+            )
 
         if route == "/api/sessions" or route.startswith("/api/sessions/"):
             return self._get_session_route(route)
@@ -1184,9 +1196,13 @@ class Handler(BaseHTTPRequestHandler):
             result = gateway.chat(provider, clean_messages, system=system)
             return self._send(200, result)
         except gateway.GatewayError as e:
-            return self._send(502, {"error": str(e)})
+            return self._send(502, {
+                "error": gateway.safe_error_summary(e, provider=provider)
+            })
         except Exception as e:  # unexpected - still return JSON, not a stack page
-            return self._send(500, {"error": f"unexpected: {e}"})
+            return self._send(500, {
+                "error": gateway.safe_error_summary(e, provider=provider)
+            })
 
     def _explore(self, payload):
         try:
@@ -1206,7 +1222,9 @@ class Handler(BaseHTTPRequestHandler):
             resp = scanner.scan(query, gateway=gateway, provider=provider)
             return self._send(200, resp)
         except Exception as e:
-            return self._send(502, {"error": f"search failed: {e}"})
+            return self._send(502, {
+                "error": search_runtime.safe_error_summary(e)
+            })
 
     def _fetch(self, payload):
         try:
@@ -1455,6 +1473,10 @@ def make_server(port=None, host="127.0.0.1", session_root=None):
     )
     server.recovery_required_session_ids = {
         item.session_id for item in store.list_recoverable()
+    }
+    server.diagnostic_limits = {
+        "request_body_bytes": MAX_REQUEST_BODY_BYTES,
+        "workspace_content_bytes": MAX_WORKSPACE_CONTENT_BYTES,
     }
     return server
 

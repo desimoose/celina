@@ -13,14 +13,20 @@ import os
 import urllib.error
 import urllib.request
 
+import redaction
 import traffic
 
 ANTHROPIC_VERSION = "2023-06-01"
-TIMEOUT = 300
+TIMEOUT = 60
+MAX_ERROR_SUMMARY_CHARS = 160
 
 
 class GatewayError(Exception):
-    pass
+    def __init__(self, message, *, provider=None, status=None, kind=None):
+        super().__init__(message)
+        self.provider = provider
+        self.status = status
+        self.kind = kind
 
 
 # Each provider: how to reach it, how to authenticate, which model to default to.
@@ -126,25 +132,84 @@ def available():
     return out
 
 
+def _provider_name(provider):
+    return provider if provider in PROVIDERS else "provider"
+
+
+def _bounded_summary(value):
+    single_line = " ".join(str(value or "").split())
+    return single_line[:MAX_ERROR_SUMMARY_CHARS] or "provider request failed"
+
+
+def _configured_secrets():
+    return tuple(
+        key_for(name)
+        for name in PROVIDERS
+        if key_for(name)
+    )
+
+
+def safe_error_summary(error, provider=None):
+    """Return a bounded public error without upstream response or URL text."""
+    known_provider = _provider_name(
+        provider or getattr(error, "provider", None)
+    )
+    status = getattr(error, "status", None)
+    kind = getattr(error, "kind", None)
+    if kind == "timeout" or isinstance(error, TimeoutError):
+        summary = f"{known_provider} request timed out"
+    elif isinstance(status, int):
+        summary = f"{known_provider} returned HTTP {status}"
+    elif kind == "not_configured":
+        summary = f"{known_provider} is not configured"
+    elif kind == "invalid_response":
+        summary = f"{known_provider} returned an invalid response"
+    elif kind == "unknown_provider":
+        summary = "unknown provider"
+    else:
+        summary = f"{known_provider} request failed"
+    safe = redaction.Redactor(_configured_secrets()).redact_text(summary)[0]
+    return _bounded_summary(safe)
+
+
+def _failure(provider, *, kind=None, status=None):
+    error = GatewayError(
+        "provider request failed",
+        provider=provider,
+        status=status,
+        kind=kind,
+    )
+    error.args = (safe_error_summary(error, provider=provider),)
+    return error
+
+
 def _post(url, payload, headers, traffic_context=None, provider=None):
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-    if traffic_context is not None:
-        return traffic.provider_request(
-            traffic_context,
-            provider or "provider",
-            req,
-            timeout=TIMEOUT,
-            action_type="provider.chat",
-        )
     try:
+        if traffic_context is not None:
+            return traffic.provider_request(
+                traffic_context,
+                provider or "provider",
+                req,
+                timeout=TIMEOUT,
+                action_type="provider.chat",
+            )
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             return json.loads(resp.read().decode("utf-8"))
+    except traffic.TrafficCancelled:
+        raise
     except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", "replace")[:600]
-        raise GatewayError(f"{e.code} from provider: {detail}") from e
+        e.close()
+        raise _failure(provider, status=e.code) from e
     except urllib.error.URLError as e:
-        raise GatewayError(f"could not reach provider: {e.reason}") from e
+        if isinstance(e.reason, TimeoutError):
+            raise _failure(provider, kind="timeout") from e
+        raise _failure(provider) from e
+    except TimeoutError as e:
+        raise _failure(provider, kind="timeout") from e
+    except (UnicodeDecodeError, json.JSONDecodeError, traffic.MalformedResponseError) as e:
+        raise _failure(provider, kind="invalid_response") from e
 
 
 def _anthropic(
@@ -157,7 +222,7 @@ def _anthropic(
 ):
     key = os.environ.get(spec["key_env"], "").strip()
     if not key:
-        raise GatewayError("ANTHROPIC_API_KEY is not set in .env")
+        raise _failure("anthropic", kind="not_configured")
     payload = {
         "model": model,
         "max_tokens": max_tokens,
@@ -208,7 +273,7 @@ def _openai_compatible(
     if spec["key_env"]:
         key = os.environ.get(spec["key_env"], "").strip()
         if not key:
-            raise GatewayError(f"{spec['key_env']} is not set in .env")
+            raise _failure(provider, kind="not_configured")
         headers["authorization"] = f"Bearer {key}"
 
     full = ([{"role": "system", "content": system}] if system else []) + messages
@@ -223,7 +288,7 @@ def _openai_compatible(
 
     choices = data.get("choices") or []
     if not choices:
-        raise GatewayError(f"provider returned no choices: {json.dumps(data)[:400]}")
+        raise _failure(provider, kind="invalid_response")
     text = choices[0].get("message", {}).get("content") or ""
     usage = data.get("usage", {})
     return text, {
@@ -245,7 +310,7 @@ def chat(
 ):
     """Send a conversation to any backend and get back plain text."""
     if provider not in PROVIDERS:
-        raise GatewayError(f"unknown provider '{provider}'")
+        raise _failure(provider, kind="unknown_provider")
     spec = PROVIDERS[provider]
     model = model or model_for(provider)
 

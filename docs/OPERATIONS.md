@@ -102,6 +102,23 @@ material. Celina does not claim that provider requests are anonymous.
 
 ## Diagnostics and incidents
 
+After opening Celina and receiving its launch cookie, request `GET /api/health`
+from the same loopback server. The route is unavailable on a non-loopback
+binding and rejects requests without the launch cookie. Its response contains
+only aggregate application version, storage recovery state, provider readiness,
+local tool availability, and numeric limits. It never includes keys, cookies,
+CSRF tokens, prompts, source text, traffic or usage events, filesystem paths, or
+provider destinations.
+
+The health request is a passive local inspection. It does not probe a provider,
+fetch a URL, run a tool, write an event or telemetry file, or update usage
+records. Consequently, `ready` means locally configured, not that a remote
+provider is reachable. Provider and search requests have bounded external
+timeouts, observe cooperative cancellation between phases, isolate failed
+sources, and return bounded error classes/summaries without raw upstream text.
+Celina still cannot forcibly interrupt an operating-system network call before
+its timeout expires.
+
 For a suspected incident, stop the server, preserve relevant local files, and
 record the Celina version, selected provider, route/action, time, and a
 minimal reproduction without secrets. Redact keys, cookies, CSRF values,

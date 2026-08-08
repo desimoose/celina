@@ -520,6 +520,94 @@ class SearchRuntimeEndToEndTest(unittest.TestCase):
         self.assertEqual(len(provider_calls), 1)
         self.assertEqual(scanner_calls, [])
         self.assertEqual(reader_calls, [])
+        summary = runtime.token_accountant(started.run_id).summary(
+            self.session.session_id
+        )
+        self.assertEqual(summary.records, ())
+
+    def test_one_failed_source_does_not_prevent_remaining_sources(self):
+        failed_secret = "source-error-with-sk-secret"
+        responses = iter([
+            {
+                "direct_query": "What does the evidence show?",
+                "additional_queries": [],
+                "evidence_angles": ["finding"],
+                "summary": "Read two sources.",
+            },
+            {
+                "covered_angles": ["finding"],
+                "gaps": [],
+                "conflicts": [],
+                "follow_up_query": None,
+            },
+            {
+                "answer": "The readable source supports the finding [C1].",
+                "claims": [{
+                    "claim_id": "claim-1",
+                    "text": "The readable source supports the finding",
+                    "citation_ids": ["C1"],
+                }],
+                "citations": ["C1"],
+                "uncertainties": [],
+                "conflicts": [],
+                "gaps": [],
+            },
+        ])
+
+        def fake_provider(provider, _messages, *, system, traffic_context):
+            return {
+                "text": json.dumps(next(responses)),
+                "provider": provider,
+                "model": "deterministic-model",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }
+
+        def fake_scan(query, *, traffic_context):
+            return {"results": [
+                {
+                    "title": "Broken source",
+                    "url": "https://example.test/broken",
+                    "kind": "research",
+                },
+                {
+                    "title": "Readable source",
+                    "url": "https://example.test/readable",
+                    "kind": "research",
+                },
+            ]}
+
+        def fake_fetch(url, *, traffic_context):
+            if url.endswith("/broken"):
+                raise RuntimeError(failed_secret)
+            return {
+                "url": url,
+                "text": "The readable source contains usable evidence.",
+                "content_type": "text/html",
+            }
+
+        import search_runtime
+
+        runtime = search_runtime.SearchRuntime(
+            self.bus,
+            self.store,
+            chat_fn=fake_provider,
+            scan_fn=fake_scan,
+            fetch_fn=fake_fetch,
+        )
+        request = orchestrator.SearchRequest(
+            query="What does the evidence show?",
+            provider="ollama",
+            constraints={},
+            session_id=self.session.session_id,
+        )
+
+        completed = runtime.wait(runtime.start(request).run_id, timeout=2)
+
+        self.assertEqual(completed.state, "completed")
+        self.assertEqual(len(completed.evidence), 1)
+        self.assertEqual(completed.evidence[0].title, "Readable source")
+        stored_events = self.store.list_events(self.session.session_id)
+        self.assertNotIn(failed_secret, json.dumps(stored_events, default=str))
 
 
 class StripCodeFenceTest(unittest.TestCase):

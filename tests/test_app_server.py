@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import socket
 import sys
 import tempfile
 import threading
@@ -711,6 +712,73 @@ class NotebookApiTest(unittest.TestCase):
             headers={"Cookie": cookie},
         )
         self.assertEqual(status, 200)
+
+    def test_health_requires_launch_cookie_and_makes_only_loopback_connection(self):
+        status, _headers, body = self._request("GET", "/api/health")
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(body), {"error": "forbidden"})
+
+        cookie, _csrf = self._launch()
+        original_create_connection = socket.create_connection
+        with mock.patch(
+            "socket.create_connection", wraps=original_create_connection
+        ) as create_connection, mock.patch.object(
+            app.gateway, "_post"
+        ) as provider_post, mock.patch.object(
+            app.tools, "fetch_public"
+        ) as public_fetch, mock.patch.object(
+            app.update_check, "check"
+        ) as update_check:
+            before = {
+                os.path.relpath(os.path.join(root, name), self.celina_home)
+                for root, _dirs, names in os.walk(self.celina_home)
+                for name in names
+            }
+            status, headers, body = self._request(
+                "GET", "/api/health", headers={"Cookie": cookie}
+            )
+            after = {
+                os.path.relpath(os.path.join(root, name), self.celina_home)
+                for root, _dirs, names in os.walk(self.celina_home)
+                for name in names
+            }
+
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("Cache-Control"), "no-store")
+        value = json.loads(body)
+        self.assertEqual(
+            set(value),
+            {"status", "version", "storage", "providers", "tools", "limits"},
+        )
+        self.assertEqual(before, after)
+        provider_post.assert_not_called()
+        public_fetch.assert_not_called()
+        update_check.assert_not_called()
+        self.assertTrue(create_connection.call_args_list)
+        for call in create_connection.call_args_list:
+            host = call.args[0][0]
+            self.assertIn(host, {"127.0.0.1", "::1", "localhost"})
+
+    @mock.patch.object(app.gateway, "chat")
+    def test_chat_provider_error_is_bounded_and_redacted(self, chat):
+        secret = "sk-route-secret-value"
+        chat.side_effect = app.gateway.GatewayError(
+            f"provider failed with {secret}" + ("z" * 2000)
+        )
+        with mock.patch.dict(
+            os.environ, {"OPENAI_API_KEY": secret}, clear=False
+        ):
+            status, _headers, body = self._request(
+                "POST",
+                "/api/chat",
+                {"provider": "openai", "messages": [{"role": "user", "content": "hi"}]},
+                {"Content-Type": "application/json"},
+            )
+
+        self.assertEqual(status, 502)
+        error = json.loads(body)["error"]
+        self.assertNotIn(secret, error)
+        self.assertLessEqual(len(error), app.gateway.MAX_ERROR_SUMMARY_CHARS)
 
     def test_unauthorized_notebook_body_is_discarded_before_json_parsing(self):
         status, _headers, body = self._request(

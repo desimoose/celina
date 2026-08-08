@@ -400,6 +400,37 @@ h1, h2 { font-weight: 800; letter-spacing: -.03em; }
   white-space: nowrap;
 }
 .session-delete:disabled { opacity: .5; cursor: not-allowed; box-shadow: var(--inset-ash); }
+.learning-home-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 34px 42px 24px; }
+.learning-home-head h2 { margin: 4px 0 8px; font-size: 32px; line-height: 1.05; }
+.learning-home-head p { max-width: 58ch; margin: 0; color: var(--graphite); font-size: 14px; line-height: 1.5; }
+.learning-home-momentum { display: grid; grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(120px, .7fr)); gap: 1px; margin: 0 42px; overflow: hidden; border-radius: var(--radius); background: var(--ash); box-shadow: var(--shadow-soft); }
+.learning-home-momentum > div { padding: 20px; background: var(--white); }
+.learning-home-momentum-main { display: flex; flex-direction: column; gap: 3px; }
+.learning-home-momentum-main strong { color: var(--ember-text); font-family: var(--mono); font-size: 34px; line-height: 1; }
+.learning-home-momentum-main > span:last-child, .learning-home-momentum-stat span { color: var(--graphite); font-size: 11px; }
+.learning-home-momentum-stat { display: flex; flex-direction: column; justify-content: center; gap: 5px; }
+.learning-home-momentum-stat strong { font-family: var(--mono); font-size: 20px; }
+.learning-home-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(260px, .8fr); gap: 16px; padding: 18px 42px 0; }
+.learning-home-panel { padding: 20px; border-radius: var(--radius); background: var(--white); box-shadow: var(--inset-ash); }
+.learning-home-panel--wide { min-width: 0; }
+.learning-home-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.learning-home-panel-head h3 { margin: 2px 0 0; font-size: 18px; }
+.learning-home-list { display: grid; gap: 8px; }
+.learning-home-item { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px; border-radius: var(--radius); background: var(--cream); }
+.learning-home-item-copy { min-width: 0; }
+.learning-home-item-copy strong, .learning-home-item-copy span { display: block; }
+.learning-home-item-copy strong { overflow: hidden; color: var(--ink); font-size: 13px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.learning-home-item-copy span { margin-top: 4px; color: var(--graphite); font-family: var(--mono); font-size: 10px; }
+.learning-home-item button { flex: 0 0 auto; padding: 7px 10px; }
+.learning-home-empty { margin: 0; color: var(--graphite); font-size: 12px; line-height: 1.5; }
+.learning-home-notebooks { margin: 16px 42px 36px; }
+.learning-home-notebook-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.learning-home-notebook { padding: 14px; border-radius: var(--radius); background: var(--cream); }
+.learning-home-notebook h4 { margin: 0 0 5px; font-size: 14px; }
+.learning-home-notebook p { overflow: hidden; margin: 0 0 12px; color: var(--graphite); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.learning-home-progress { height: 5px; margin: 8px 0 10px; overflow: hidden; border-radius: 99px; background: var(--ash); }
+.learning-home-progress span { display: block; height: 100%; border-radius: inherit; background: var(--ember); }
+.learning-home-notebook-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--smoke); font-family: var(--mono); font-size: 10px; }
 .research-loop { margin: 0 32px; padding: 12px 14px; background: var(--cream); border-radius: var(--radius); box-shadow: var(--inset-ash); }
 .research-loop[hidden] { display: none; }
 .research-loop-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; color: var(--ink); font-size: 12px; font-weight: 800; }

@@ -27,6 +27,8 @@ _STUDY_TEXT_LIMIT = 1200
 _STUDY_CITATION_LIMIT = 6
 _STUDY_REVIEW_RATINGS = {"again", "hard", "got_it"}
 _STUDY_INTERVAL_CAP_DAYS = 30.0
+_HOME_DUE_LIMIT = 20
+_HOME_NEXT_STEP_LIMIT = 12
 _PATH_DEPTHS = {"survey", "college", "graduate"}
 
 
@@ -755,4 +757,109 @@ def review_study_item(notebook_id, payload):
     return {
         "study_set": study_set,
         "review_due_count": review_due_count(notebook, reviewed_at),
+    }
+
+
+def learning_home():
+    """Return a bounded, local-only snapshot for the learner's home view."""
+    saved_notebooks = list_notebooks()
+    due_items = []
+    next_steps = []
+    summaries = []
+    total_cards = 0
+    reviewed_cards = 0
+    due_count = 0
+    now = datetime.now(timezone.utc)
+
+    for notebook in saved_notebooks:
+        notebook_due = 0
+        notebook_total = 0
+        notebook_reviewed = 0
+        for study_set in notebook.get("study_sets", []):
+            if not isinstance(study_set, dict):
+                continue
+            for item in study_set.get("items", []):
+                if not isinstance(item, dict):
+                    continue
+                notebook_total += 1
+                total_cards += 1
+                if item.get("status") == "review" and int(item.get("repetitions") or 0) > 0:
+                    notebook_reviewed += 1
+                    reviewed_cards += 1
+                if not _study_item_is_due(item, now):
+                    continue
+                due_count += 1
+                notebook_due += 1
+                if len(due_items) < _HOME_DUE_LIMIT:
+                    prompt = _truncate(
+                        item.get("front") or item.get("question"),
+                        _STUDY_TEXT_LIMIT,
+                    )
+                    if prompt:
+                        due_items.append({
+                            "id": f"{notebook['id']}:{study_set.get('id')}:{item.get('id')}",
+                            "notebook_id": notebook["id"],
+                            "notebook_title": notebook["title"],
+                            "study_set_id": study_set.get("id", ""),
+                            "item_id": item.get("id", ""),
+                            "mode": study_set.get("mode", "flashcards"),
+                            "prompt": prompt,
+                            "status": item.get("status", "learning"),
+                            "citation_ids": list(item.get("citation_ids") or [])[:_STUDY_CITATION_LIMIT],
+                            "due_at": item.get("due_at"),
+                        })
+        path = notebook.get("learning_path") or {}
+        path_count = sum(
+            len(section.get("items", []))
+            for section in path.get("sections", [])
+            if isinstance(section, dict)
+        )
+        if path_count and len(next_steps) < _HOME_NEXT_STEP_LIMIT:
+            for section in path.get("sections", []):
+                if not isinstance(section, dict):
+                    continue
+                items = section.get("items", [])
+                if not isinstance(items, list):
+                    continue
+                for item_index, item in enumerate(items):
+                    if not isinstance(item, dict) or not _truncate(item.get("text"), 600):
+                        continue
+                    next_steps.append({
+                        "id": f"{notebook['id']}:{section.get('id', 'path')}:{item_index}",
+                        "notebook_id": notebook["id"],
+                        "notebook_title": notebook["title"],
+                        "section_title": _truncate(section.get("title"), 120) or "Learning path",
+                        "text": _truncate(item.get("text"), 600),
+                    })
+                    break
+                if len(next_steps) >= _HOME_NEXT_STEP_LIMIT:
+                    break
+        mastery = round((notebook_reviewed / notebook_total) * 100) if notebook_total else 0
+        summaries.append({
+            "id": notebook["id"],
+            "title": notebook["title"],
+            "goal": notebook.get("goal", ""),
+            "source_count": len(notebook.get("sources", [])),
+            "study_set_count": len(notebook.get("study_sets", [])),
+            "total_cards": notebook_total,
+            "reviewed_cards": notebook_reviewed,
+            "mastery_percent": mastery,
+            "due_count": notebook_due,
+            "learning_path_depth": path.get("depth", "college"),
+            "learning_path_item_count": path_count,
+            "updated_at": notebook.get("updated_at", ""),
+        })
+
+    mastery = round((reviewed_cards / total_cards) * 100) if total_cards else 0
+    return {
+        "momentum": {
+            "active_notebooks": len(saved_notebooks),
+            "total_cards": total_cards,
+            "reviewed_cards": reviewed_cards,
+            "due_count": due_count,
+            "mastery_percent": mastery,
+        },
+        "due_items": due_items,
+        "next_steps": next_steps,
+        "notebooks": summaries,
     }

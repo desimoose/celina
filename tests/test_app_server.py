@@ -383,7 +383,6 @@ class NotebookApiTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("attachment", headers.get("Content-Disposition", ""))
         self.assertEqual(len(json.loads(body)["notebooks"]), 2)
-
         status, _headers, body = self._request(
             "DELETE", "/api/notebooks", headers=self._mutation_headers(cookie, csrf)
         )
@@ -394,6 +393,21 @@ class NotebookApiTest(unittest.TestCase):
         )
         self.assertEqual(listed, 200)
         self.assertEqual(json.loads(body), {"notebooks": []})
+
+    def test_learning_home_requires_launch_cookie_and_returns_progress(self):
+        _created, cookie, _csrf = self._create_notebook("Home API", "Learn biology")
+
+        status, _headers, body = self._request(
+            "GET",
+            "/api/learning-home",
+            headers={"Cookie": cookie},
+        )
+
+        self.assertEqual(status, 200)
+        response = json.loads(body)
+        self.assertIn("momentum", response)
+        self.assertIn("due_items", response)
+        self.assertEqual(response["momentum"]["active_notebooks"], 1)
 
     def test_notebook_source_route_accepts_search_capture_metadata(self):
         created, cookie, csrf = self._create_notebook()

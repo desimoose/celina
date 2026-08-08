@@ -143,6 +143,8 @@ class SettingsUiSourceTest(unittest.TestCase):
         self.assertIn('Got it', html)
         self.assertIn('study-mode', html)
         self.assertIn('session-badge', html)
+        self.assertIn('learning-home', html)
+        self.assertIn('/api/learning-home', js)
 
 
 class SettingsRoutesTest(unittest.TestCase):

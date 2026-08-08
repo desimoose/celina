@@ -15,6 +15,10 @@
     <div class="brand"><img src="/celina.svg" alt="Celina" /></div>
 
     <div class="nav">
+      <button class="navbtn" data-view="home" aria-label="Learning Home" data-tooltip="See what to study next">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 11 8-7 8 7v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-8Z"/><path d="M9 20v-6h6v6"/></svg>
+        <span>Home</span>
+      </button>
       <button class="navbtn is-active" data-view="work" aria-label="Search and read" data-tooltip="Search and read">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <span>Search</span>
@@ -72,6 +76,41 @@
         <button class="mascot-panel-action" id="mascot-enable-notify" type="button">Enable notifications</button>
       </section>
     </div>
+
+    <!-- Learning Home -->
+    <section class="surface" id="s-home" aria-label="Learning Home" hidden>
+      <div class="learning-home-head">
+        <div>
+          <span class="eyebrow">Learning Home</span>
+          <h2>Keep the thread.</h2>
+          <p>Return to the ideas that are due, then choose the next step that moves you forward.</p>
+        </div>
+        <button id="learning-home-refresh" class="btn btn--ghost" type="button">Refresh</button>
+      </div>
+      <div class="learning-home-momentum" id="learning-home-momentum">
+        <div class="learning-home-momentum-main"><span class="eyebrow">Today</span><strong id="home-due-count">0</strong><span>items due now</span></div>
+        <div class="learning-home-momentum-stat"><strong id="home-mastery">0%</strong><span>review mastery</span></div>
+        <div class="learning-home-momentum-stat"><strong id="home-notebook-count">0</strong><span>active notebooks</span></div>
+        <div class="learning-home-momentum-stat"><strong id="home-card-count">0</strong><span>saved cards</span></div>
+      </div>
+      <div class="learning-home-grid">
+        <section class="learning-home-panel learning-home-panel--wide" aria-label="Today's study queue">
+          <div class="learning-home-panel-head"><div><span class="eyebrow">Today</span><h3>Study queue</h3></div><span id="home-queue-label" class="mono"></span></div>
+          <div id="home-due-list" class="learning-home-list"></div>
+          <p id="home-due-empty" class="learning-home-empty">Nothing is due. Generate practice in a notebook when you are ready for the next pass.</p>
+        </section>
+        <section class="learning-home-panel" aria-label="Next steps">
+          <div class="learning-home-panel-head"><div><span class="eyebrow">Continue</span><h3>Next steps</h3></div></div>
+          <div id="home-next-list" class="learning-home-list"></div>
+          <p id="home-next-empty" class="learning-home-empty">Build a learning path inside a notebook to see your next step here.</p>
+        </section>
+      </div>
+      <section class="learning-home-panel learning-home-notebooks" aria-label="Notebook progress">
+        <div class="learning-home-panel-head"><div><span class="eyebrow">Your workspace</span><h3>Notebook progress</h3></div></div>
+        <div id="home-notebook-list" class="learning-home-notebook-list"></div>
+        <p id="home-notebook-empty" class="learning-home-empty">Create a notebook to start a research-to-learning loop.</p>
+      </section>
+    </section>
 
     <!-- Search + reader -->
     <section class="surface" id="s-work" aria-label="Search and read">

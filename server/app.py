@@ -380,6 +380,11 @@ class Handler(BaseHTTPRequestHandler):
                 headers={"Content-Disposition": "attachment; filename=celina-notebooks.json"},
             )
 
+        if route == "/api/learning-home":
+            if not self._has_launch_cookie():
+                return self._forbidden()
+            return self._send(200, notebooks.learning_home())
+
         if route == "/api/notebooks" or route.startswith("/api/notebooks/"):
             return self._get_notebook_route(route)
 

@@ -389,6 +389,42 @@ class NotebooksTest(unittest.TestCase):
                 },
             )
 
+    def test_learning_home_summarizes_due_cards_progress_and_next_steps(self):
+        notebook = self.notebooks.create_notebook(
+            "Learning home",
+            goal="Understand attention",
+        )
+        saved = self.notebooks.save_study_set(
+            notebook["id"],
+            {
+                "mode": "flashcards",
+                "items": [
+                    {"front": "Due front", "back": "Due back", "citation_ids": []},
+                    {"front": "Review front", "back": "Review back", "citation_ids": []},
+                ],
+            },
+        )
+        self.notebooks.review_study_item(
+            notebook["id"],
+            {
+                "study_set_id": saved["id"],
+                "item_id": saved["items"][1]["id"],
+                "rating": "got_it",
+            },
+        )
+
+        home = self.notebooks.learning_home()
+
+        self.assertEqual(home["momentum"]["active_notebooks"], 1)
+        self.assertEqual(home["momentum"]["total_cards"], 2)
+        self.assertEqual(home["momentum"]["reviewed_cards"], 1)
+        self.assertEqual(home["momentum"]["due_count"], 1)
+        self.assertEqual(home["momentum"]["mastery_percent"], 50)
+        self.assertEqual(home["due_items"][0]["prompt"], "Due front")
+        self.assertEqual(home["due_items"][0]["notebook_id"], notebook["id"])
+        self.assertTrue(home["next_steps"])
+        self.assertEqual(home["notebooks"][0]["mastery_percent"], 50)
+
     def test_store_uses_workspace_notebooks_files(self):
         notebook = self.notebooks.create_notebook("My notebook")
         target = os.path.join(self.data_root, "workspace", "notebooks", f"{notebook['id']}.json")

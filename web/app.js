@@ -19,6 +19,7 @@ const state = {
   activeNotebookSourceId: null,
   selectedSearchNotebookId: "",
   studySet: null,
+  learningHome: null,
   outputFormat: "markdown",
   sessionRetentionSeconds: 86400,
   providerPrivacy: {},
@@ -519,10 +520,19 @@ function nav(view) {
   state.view = view;
   document.querySelectorAll(".navbtn").forEach((b) =>
     b.classList.toggle("is-active", b.dataset.view === view));
-  const map = { work: "s-work", library: "s-library", notebook: "s-notebook" };
+  const map = { home: "s-home", work: "s-work", library: "s-library", notebook: "s-notebook" };
   Object.entries(map).forEach(([v, id]) => { $(id).hidden = v !== view; });
-  if (view === "library") { loadFiles(); loadProjects(); }
-  if (view === "notebook") {
+  if (view === "home") {
+    loadLearningHome();
+    const head = document.querySelector(".asst-head span");
+    if (head) head.textContent = "Ask about your learning";
+    $("input").placeholder = "Ask about what you want to understand";
+  } else if (view === "library") {
+    loadFiles(); loadProjects();
+    const head = document.querySelector(".asst-head span");
+    if (head) head.textContent = "Ask about this";
+    $("input").placeholder = "Ask about what you’re reading";
+  } else if (view === "notebook") {
     loadNotebooks();
     const head = document.querySelector(".asst-head span");
     if (head) head.textContent = "Ask about this notebook";
@@ -533,6 +543,114 @@ function nav(view) {
     if (head) head.textContent = "Ask about this";
     $("input").placeholder = "Ask about what you’re reading";
   }
+}
+
+async function loadLearningHome() {
+  try {
+    const data = await fetch("/api/learning-home").then((r) => r.json());
+    if (data.error) throw new Error(data.error);
+    state.learningHome = data;
+    renderLearningHome();
+  } catch (err) {
+    setEngine("Could not load Learning Home: " + err.message);
+  }
+}
+
+async function openNotebookFromHome(notebookId, studySetId = "") {
+  nav("notebook");
+  await selectNotebook(notebookId);
+  if (!studySetId || !state.activeNotebook) return;
+  const savedSet = (state.activeNotebook.study_sets || []).find((studySet) => studySet.id === studySetId);
+  if (savedSet) {
+    state.studySet = savedSet;
+    renderStudySet();
+  }
+}
+
+function renderLearningHome() {
+  const data = state.learningHome;
+  if (!data) return;
+  const momentum = data.momentum || {};
+  $("home-due-count").textContent = String(momentum.due_count || 0);
+  $("home-mastery").textContent = `${momentum.mastery_percent || 0}%`;
+  $("home-notebook-count").textContent = String(momentum.active_notebooks || 0);
+  $("home-card-count").textContent = String(momentum.total_cards || 0);
+
+  const dueItems = data.due_items || [];
+  $("home-queue-label").textContent = `${dueItems.length} shown`;
+  const dueList = $("home-due-list");
+  dueList.replaceChildren(...dueItems.map((item) => {
+    const row = document.createElement("article");
+    row.className = "learning-home-item";
+    const copy = document.createElement("div");
+    copy.className = "learning-home-item-copy";
+    const prompt = document.createElement("strong");
+    prompt.textContent = item.prompt;
+    const meta = document.createElement("span");
+    meta.textContent = `${item.notebook_title} · ${item.mode === "quiz" ? "quiz" : "flashcard"}`;
+    copy.append(prompt, meta);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn btn--ghost";
+    button.textContent = "Study now";
+    button.onclick = () => openNotebookFromHome(item.notebook_id, item.study_set_id);
+    row.append(copy, button);
+    return row;
+  }));
+  $("home-due-empty").hidden = dueItems.length > 0;
+
+  const nextSteps = data.next_steps || [];
+  const nextList = $("home-next-list");
+  nextList.replaceChildren(...nextSteps.map((step) => {
+    const row = document.createElement("article");
+    row.className = "learning-home-item";
+    const copy = document.createElement("div");
+    copy.className = "learning-home-item-copy";
+    const text = document.createElement("strong");
+    text.textContent = step.text;
+    const meta = document.createElement("span");
+    meta.textContent = `${step.notebook_title} · ${step.section_title}`;
+    copy.append(text, meta);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn btn--ghost";
+    button.textContent = "Open";
+    button.onclick = () => openNotebookFromHome(step.notebook_id);
+    row.append(copy, button);
+    return row;
+  }));
+  $("home-next-empty").hidden = nextSteps.length > 0;
+
+  const notebookList = $("home-notebook-list");
+  const notebooks = data.notebooks || [];
+  notebookList.replaceChildren(...notebooks.map((notebook) => {
+    const card = document.createElement("article");
+    card.className = "learning-home-notebook";
+    const title = document.createElement("h4");
+    title.textContent = notebook.title;
+    const goal = document.createElement("p");
+    goal.textContent = notebook.goal || "No learning goal set";
+    const progress = document.createElement("div");
+    progress.className = "learning-home-progress";
+    const fill = document.createElement("span");
+    fill.style.width = `${Math.max(0, Math.min(100, notebook.mastery_percent || 0))}%`;
+    progress.appendChild(fill);
+    const meta = document.createElement("div");
+    meta.className = "learning-home-notebook-meta";
+    const reviewed = document.createElement("span");
+    reviewed.textContent = `${notebook.reviewed_cards}/${notebook.total_cards} reviewed`;
+    const due = document.createElement("span");
+    due.textContent = notebook.due_count ? `${notebook.due_count} due` : "clear";
+    meta.append(reviewed, due);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn btn--ghost";
+    button.textContent = "Open notebook";
+    button.onclick = () => openNotebookFromHome(notebook.id);
+    card.append(title, goal, progress, meta, button);
+    return card;
+  }));
+  $("home-notebook-empty").hidden = notebooks.length > 0;
 }
 
 // ---------- source (what Studio + Assistant work from) ----------
@@ -1868,6 +1986,7 @@ $("session-delete").onclick = async () => {
   if (ok) updatePrivacyUi();
 };
 $("example-q").onclick = () => { $("url").value = "does caffeine affect sleep?"; findPapers(); };
+$("learning-home-refresh").onclick = loadLearningHome;
 $("refresh").onclick = loadFiles;
 $("project-select").onchange = (e) => { state.projectId = e.target.value; renderProjects(); };
 $("output-format").onchange = (e) => { state.outputFormat = e.target.value; };

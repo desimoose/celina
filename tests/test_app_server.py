@@ -45,10 +45,11 @@ class MakeServerTest(unittest.TestCase):
             srv.server_close()
 
     @mock.patch.object(app.update_check, "check")
-    def test_serves_update_check_endpoint(self, check):
+    def test_serves_local_only_version_status_endpoint(self, check):
         check.return_value = {
-            "current": "0.1.0", "latest": "0.2.0",
-            "update_available": True, "url": "https://example.test/releases",
+            "current": "0.1.0",
+            "status": "local-only",
+            "remote_check": False,
         }
         srv = app.make_server(port=0)
         port = srv.server_address[1]

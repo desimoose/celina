@@ -72,6 +72,9 @@ These identifiers are the contract used by tests and release review:
   crash-reporting clients, usage events, phone-home checks, remote feature
   flags, or hidden outbound requests. Diagnostics are local-only and
   user-invoked; provider requests are the explicit exception described above.
+  Automatic and anonymous update checks are disabled. The local update-status
+  route reports only the bundled version and explicitly states that no remote
+  check occurred.
 
 ## Guarantees and non-guarantees
 

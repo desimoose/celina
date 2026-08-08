@@ -18,6 +18,9 @@ Confirm that the server is bound to loopback, the selected provider label is
 correct, and the data roots are the expected `workspace/`, `projects/`, and
 session locations. A health or diagnostic check, when available, is local-only
 and user-invoked; it must not contact a remote service or expose secrets.
+Automatic and anonymous update checks are disabled. `GET /api/update-check`
+is a local-only version-status response: it does not contact GitHub or any
+other remote service and does not claim that a remote update check ran.
 
 ## Backup
 
@@ -142,3 +145,5 @@ Ollama remains labeled local-only, hosted-provider disclosure is present, and
 no new analytics, tracking, phone-home, remote feature-flag, or hidden network
 behavior was introduced. Release artifacts and bundled tools are part of the
 `release supply chain` and must be checked accordingly.
+Celina does not discover upgrades automatically; obtain release information
+through the user-chosen distribution channel.

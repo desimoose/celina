@@ -16,7 +16,7 @@ Stdlib only. Serves the web UI and a small JSON API:
   GET  /api/search-runs/{id}          read run state
   POST /api/search-runs/{id}/stop     cooperatively stop a run
   GET  /api/search-runs/{id}/events   resumable live trace (SSE)
-  GET  /api/update-check              anonymous check against GitHub Releases
+  GET  /api/update-check              local version status; no remote request
 
 Run:  python server/app.py     then open the exact loopback URL it prints
 """

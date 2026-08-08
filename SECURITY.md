@@ -28,6 +28,24 @@ phone-home checks, remote feature flags, or hidden outbound requests.
 Diagnostics are local-only and user-invoked. Explicit requests to the selected
 provider are not product telemetry.
 
+## Explicit provider gateway allowlist
+
+The following are the only provider gateway URLs exempted from the
+zero-telemetry release gate. Requests to them must be explicitly initiated by
+the user through the selected provider, contain only the disclosed question
+and bounded context, and continue to route through `server/gateway.py`:
+
+- Anthropic: `https://api.anthropic.com/v1/messages`
+- OpenAI: `https://api.openai.com/v1/chat/completions`
+- OpenRouter: `https://openrouter.ai/api/v1/chat/completions`
+- xAI: `https://api.x.ai/v1/chat/completions`
+- local Ollama: `http://localhost:11434/v1/chat/completions`
+
+Documenting an endpoint does not automatically exempt it. The repository-native
+release verifier also requires the endpoint to be an approved provider gateway.
+Search, document import, and other user-requested public fetches are untrusted
+input paths, not telemetry exceptions.
+
 Ollama is local-only. A hosted provider receives the user's configured
 question and bounded context. Incognito deletes Celina-local session traffic,
 but cannot control third-party provider retention, website logs, OS access, or
@@ -60,3 +78,13 @@ credential testing, persistence, or exfiltration. A safe report can use a
 malicious webpage, hostile PDF, compromised provider fixture, same-machine
 user permission scenario, or release supply chain fixture without contacting
 third parties.
+
+## Release security gates
+
+Every push and pull request runs the Python and JavaScript tests, Python
+compilation, JavaScript syntax validation, whitespace validation, and
+`python scripts/verify_release.py`. The release verifier requires this policy,
+`docs/SECURITY_MODEL.md`, `docs/OPERATIONS.md`, and `CONTRIBUTING.md`; scans
+committed production files for conservative secret patterns; and rejects
+analytics or crash-reporting dependencies, tracking URLs, remote feature-flag
+clients, and product-event or diagnostic uploads.

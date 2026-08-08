@@ -41,6 +41,13 @@ class _PageResponse:
     content_type: str
 
 
+@dataclass(frozen=True)
+class _PublicHttpResponse:
+    status: int
+    headers: dict
+    body: bytes
+
+
 def _first_existing(*paths):
     for p in paths:
         if p and os.path.isfile(p):
@@ -93,6 +100,16 @@ _BLANKS = re.compile(r"\n{3,}")
 # any other DOM oddity) can otherwise return megabytes uncapped.
 _MAX_FETCHED_TEXT_CHARS = 600_000
 _MAX_FETCHED_BYTES = 8_000_000
+_MAX_PUBLIC_REDIRECTS = 5
+_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_PUBLIC_OPENER = urllib.request.build_opener(_NoRedirectHandler())
 
 
 def _bounded_bytes(body):
@@ -191,13 +208,44 @@ def _media_type(content_type):
     return content_type.split(";", 1)[0].strip().lower()
 
 
-def validate_public_http_url(url):
-    """Reject import targets that resolve to local or non-public addresses.
+def _legacy_ipv4_address(hostname):
+    """Parse inet_aton-style IPv4 forms without asking the OS resolver."""
+    if not hostname or not hostname[0].isdigit():
+        return None
+    parts = hostname.lower().split(".")
+    if len(parts) > 4:
+        return None
 
-    This is intentionally an import guard: Celina can still read ordinary
-    research links, but a notebook import must not become a convenient SSRF
-    primitive for loopback, link-local, private, or metadata services.
-    """
+    values = []
+    try:
+        for part in parts:
+            if not part:
+                return None
+            if part.startswith("0x"):
+                values.append(int(part[2:], 16))
+            elif len(part) > 1 and part.startswith("0"):
+                values.append(int(part, 8))
+            else:
+                values.append(int(part, 10))
+    except ValueError:
+        return None
+
+    widths = {
+        1: (32,),
+        2: (8, 24),
+        3: (8, 8, 16),
+        4: (8, 8, 8, 8),
+    }[len(values)]
+    if any(value < 0 or value >= (1 << width) for value, width in zip(values, widths)):
+        return None
+    packed = 0
+    for value, width in zip(values, widths):
+        packed = (packed << width) | value
+    return ipaddress.IPv4Address(packed)
+
+
+def validate_public_http_url(url):
+    """Parse an HTTP(S) URL and require every resolved address to be public."""
     if not isinstance(url, str) or not url.strip():
         raise ValueError("url is required")
     candidate = url.strip()
@@ -207,15 +255,23 @@ def validate_public_http_url(url):
     if parsed.username or parsed.password or not parsed.hostname:
         raise ValueError("URL must not contain credentials and must include a host")
     try:
-        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+        port = parsed.port
     except ValueError:
         raise ValueError("URL has an invalid port")
+    if port is None:
+        port = 443 if parsed.scheme.lower() == "https" else 80
+    if port < 1:
+        raise ValueError("URL has an invalid port")
     hostname = parsed.hostname.rstrip(".").lower()
+    if not hostname:
+        raise ValueError("URL must include a host")
     if hostname == "localhost" or hostname.endswith(".localhost") or hostname.endswith(".local"):
         raise ValueError("local hostnames are not allowed")
     try:
         addresses = [ipaddress.ip_address(hostname)]
     except ValueError:
+        if _legacy_ipv4_address(hostname) is not None:
+            raise ValueError("alternate IP address forms are not allowed")
         try:
             addresses = [
                 ipaddress.ip_address(info[4][0])
@@ -223,12 +279,105 @@ def validate_public_http_url(url):
                     hostname, port, type=socket.SOCK_STREAM
                 )
             ]
-        except socket.gaierror:
-            addresses = []
+        except (socket.gaierror, ValueError):
+            raise ValueError("URL host could not be resolved")
+    if not addresses:
+        raise ValueError("URL host could not be resolved")
     for address in addresses:
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+            raise ValueError("IPv4-mapped IPv6 addresses are not allowed")
         if not address.is_global:
             raise ValueError("URL must resolve to a public address")
-    return candidate
+    return parsed
+
+
+def _header_value(headers, name):
+    for key, value in headers.items():
+        if str(key).lower() == name.lower():
+            return str(value)
+    return None
+
+
+def _response_status(response):
+    status = getattr(response, "status", None)
+    if status is None:
+        status = response.getcode()
+    return int(status)
+
+
+def _open_url(url, *, traffic_context=None):
+    """Open one URL without following redirects and return a bounded response."""
+    if (
+        traffic_context is not None
+        and traffic_context.cancellation is not None
+        and traffic_context.cancellation.is_set()
+    ):
+        raise traffic.TrafficCancelled("request cancelled before opening connection")
+
+    request = urllib.request.Request(url, headers={"User-Agent": UA})
+    event_id = None
+    request_redactions = ()
+    started = time.monotonic()
+    if traffic_context is not None:
+        event_id, request_redactions = traffic_context.recorder.start(
+            traffic_context,
+            request,
+            "page.fetch",
+        )
+
+    response = None
+    try:
+        try:
+            response = _PUBLIC_OPENER.open(request, timeout=45)
+        except urllib.error.HTTPError as error:
+            if error.code not in _REDIRECT_STATUSES:
+                raise
+            response = error
+        status = _response_status(response)
+        headers = dict(response.headers.items())
+        body = b"" if status in _REDIRECT_STATUSES else response.read(
+            _MAX_FETCHED_BYTES + 1
+        )
+        body = _bounded_bytes(body)
+    except Exception as error:
+        if traffic_context is not None:
+            traffic_context.recorder.complete(
+                traffic_context,
+                event_id,
+                started,
+                redactions=request_redactions,
+                error=error,
+            )
+        raise
+    finally:
+        if response is not None:
+            response.close()
+
+    if traffic_context is not None:
+        traffic_context.recorder.complete(
+            traffic_context,
+            event_id,
+            started,
+            status=status,
+            headers=headers,
+            body=body,
+            redactions=request_redactions,
+        )
+    return _PublicHttpResponse(status, headers, body)
+
+
+def _coerce_public_response(response):
+    if isinstance(response, _PublicHttpResponse):
+        return response
+    try:
+        status = _response_status(response)
+        headers = dict(response.headers.items())
+        body = b"" if status in _REDIRECT_STATUSES else response.read(
+            _MAX_FETCHED_BYTES + 1
+        )
+        return _PublicHttpResponse(status, headers, _bounded_bytes(body))
+    finally:
+        response.close()
 
 
 def _decode_page_body(body, content_type):
@@ -249,8 +398,7 @@ def _pdf_payload_from_bytes(data):
     return payload
 
 
-def _plain_page(url, traffic_context=None, note=None):
-    response = _fetch_plain(url, traffic_context)
+def _page_from_response(url, response, note=None):
     media_type = _media_type(response.content_type)
     if media_type == "application/pdf":
         if not pdf.looks_like_pdf(response.body):
@@ -263,7 +411,7 @@ def _plain_page(url, traffic_context=None, note=None):
             "url": url,
             "engine": "plain-pdf",
             "note": f"pdf Â· {backend}",
-            "text": text,
+            "text": _cap_fetched_text(text),
             "content_type": "application/pdf",
         }
         if pages:
@@ -290,6 +438,37 @@ def _plain_page(url, traffic_context=None, note=None):
     if note:
         result["note"] = note
     return result
+
+
+def _plain_page(url, traffic_context=None, note=None):
+    return _page_from_response(url, _fetch_plain(url, traffic_context), note)
+
+
+def fetch_public(url, *, traffic_context=None):
+    """Fetch bounded public content after validating every redirect hop."""
+    current = url.strip() if isinstance(url, str) else url
+    for redirect_count in range(_MAX_PUBLIC_REDIRECTS + 1):
+        validate_public_http_url(current)
+        response = _coerce_public_response(
+            _open_url(current, traffic_context=traffic_context)
+        )
+        if response.status in _REDIRECT_STATUSES:
+            location = _header_value(response.headers, "Location")
+            if not location:
+                raise RuntimeError("redirect response did not include a Location header")
+            if redirect_count >= _MAX_PUBLIC_REDIRECTS:
+                raise RuntimeError("too many redirects")
+            target = urllib.parse.urljoin(current, location.strip())
+            validate_public_http_url(target)
+            current = target
+            continue
+        if response.status >= 400:
+            raise RuntimeError(f"HTTP {response.status} fetching {current}")
+        return _page_from_response(
+            current,
+            _PageResponse(response.body, _content_type(response.headers)),
+        )
+    raise RuntimeError("too many redirects")
 
 
 def _fetch_obscura(binary, url, timeout=30):

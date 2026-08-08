@@ -38,7 +38,7 @@ class SearchRuntime:
         self.session_store = session_store
         self.chat_fn = chat_fn or gateway.chat
         self.scan_fn = scan_fn or scanner.scan
-        self.fetch_fn = fetch_fn or tools.fetch
+        self.fetch_fn = fetch_fn or tools.fetch_public
         self.recorder = recorder or traffic.TrafficRecorder(session_store)
         self.redactor = redactor or redaction.Redactor()
         self.accountant_factory = accountant_factory or tokens.TokenAccountant

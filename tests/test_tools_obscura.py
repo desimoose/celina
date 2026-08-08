@@ -1,4 +1,5 @@
 import os
+import socket
 import sys
 import tempfile
 import unittest
@@ -55,10 +56,45 @@ class PublicUrlValidationTest(unittest.TestCase):
             "tools.socket.getaddrinfo",
             return_value=[(None, None, None, None, ("93.184.216.34", 443))],
         ):
-            self.assertEqual(
-                tools.validate_public_http_url("https://example.com/paper"),
-                "https://example.com/paper",
-            )
+            parsed = tools.validate_public_http_url("https://example.com/paper")
+
+        self.assertEqual(parsed.scheme, "https")
+        self.assertEqual(parsed.hostname, "example.com")
+        self.assertEqual(parsed.path, "/paper")
+
+    def test_rejects_alternate_non_public_address_forms(self):
+        unsafe_urls = (
+            "http://10.0.0.8/private",
+            "http://169.254.169.254/metadata",
+            "http://[::1]/private",
+            "http://[::ffff:127.0.0.1]/private",
+            "http://2130706433/private",
+            "http://0x7f000001/private",
+            "http://0x7f.0x0.0x0.0x1/private",
+            "http://localhost/private",
+        )
+
+        for url in unsafe_urls:
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                tools.validate_public_http_url(url)
+
+    def test_rejects_non_http_schemes(self):
+        for url in (
+            "file:///etc/passwd",
+            "ftp://example.com/file",
+            "gopher://example.com/1",
+            "javascript:alert(1)",
+        ):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                tools.validate_public_http_url(url)
+
+    def test_rejects_unresolved_hostname(self):
+        with mock.patch(
+            "tools.socket.getaddrinfo",
+            side_effect=socket.gaierror("not found"),
+        ):
+            with self.assertRaises(ValueError):
+                tools.validate_public_http_url("https://missing.example/paper")
 
 
 class ObscuraTrafficTest(unittest.TestCase):

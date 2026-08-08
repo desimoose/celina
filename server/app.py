@@ -938,8 +938,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload, "kind", limit=64, required=False
             ),
         }
-        tools.validate_public_http_url(request["url"])
-        fetched = tools.fetch(request["url"])
+        fetched = tools.fetch_public(request["url"])
         return notebooks.import_source(notebook_id, request, fetched)
 
     def _generate_learning_path(self, notebook_id, payload):
@@ -1202,8 +1201,7 @@ class Handler(BaseHTTPRequestHandler):
         if not url:
             return self._send(400, {"error": "url is required"})
         try:
-            tools.validate_public_http_url(url)
-            return self._send(200, tools.fetch(url))
+            return self._send(200, tools.fetch_public(url))
         except ValueError as e:
             return self._send(400, {"error": str(e)})
         except Exception as e:

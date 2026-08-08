@@ -519,6 +519,24 @@ class NotebookApiTest(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("public address", json.loads(body)["error"])
 
+    @mock.patch.object(app.tools, "fetch_public", return_value={
+        "url": "https://example.test/article",
+        "content_type": "text/html",
+        "engine": "plain",
+        "text": "Public article",
+    })
+    def test_legacy_fetch_uses_public_fetcher(self, fetch_public):
+        status, _headers, body = self._request(
+            "POST",
+            "/api/fetch",
+            {"url": "https://example.test/article"},
+            headers={"Content-Type": "application/json"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["text"], "Public article")
+        fetch_public.assert_called_once_with("https://example.test/article")
+
     def test_notebook_source_route_rejects_unsafe_search_capture_urls(self):
         created, cookie, csrf = self._create_notebook()
 
@@ -637,7 +655,7 @@ class NotebookApiTest(unittest.TestCase):
         with open(notebook_file, "r", encoding="utf-8") as fh:
             self.assertEqual(fh.read(), before)
 
-    @mock.patch.object(app.tools, "fetch")
+    @mock.patch.object(app.tools, "fetch_public")
     def test_notebook_source_import_route_imports_html_with_document_citation(
         self,
         fetch_page,
@@ -669,7 +687,7 @@ class NotebookApiTest(unittest.TestCase):
         self.assertEqual(source["citations"][0]["label"], "document")
         fetch_page.assert_called_once_with("https://example.test/article")
 
-    @mock.patch.object(app.tools, "fetch")
+    @mock.patch.object(app.tools, "fetch_public")
     def test_notebook_source_import_route_uses_pdf_page_citations_when_available(
         self,
         fetch_page,
@@ -704,7 +722,7 @@ class NotebookApiTest(unittest.TestCase):
         self.assertEqual(source["citations"][0]["page"], 1)
         self.assertEqual(source["citations"][1]["label"], "p. 2")
 
-    @mock.patch.object(app.tools, "fetch", return_value={
+    @mock.patch.object(app.tools, "fetch_public", return_value={
         "url": "https://example.test/article",
         "content_type": "text/html",
         "engine": "plain",
@@ -726,7 +744,9 @@ class NotebookApiTest(unittest.TestCase):
         self.assertEqual(source["kind"], "import")
         fetch_page.assert_called_once_with("https://example.test/article")
 
-    @mock.patch.object(app.tools, "fetch", side_effect=RuntimeError("upstream failed"))
+    @mock.patch.object(
+        app.tools, "fetch_public", side_effect=RuntimeError("upstream failed")
+    )
     def test_notebook_source_import_returns_json_error_when_fetch_fails(self, fetch_page):
         created, cookie, csrf = self._create_notebook(title="Failed imports")
 
@@ -741,7 +761,7 @@ class NotebookApiTest(unittest.TestCase):
         self.assertEqual(json.loads(body), {"error": "could not import source"})
         fetch_page.assert_called_once_with("https://example.test/article")
 
-    @mock.patch.object(app.tools, "fetch")
+    @mock.patch.object(app.tools, "fetch_public")
     def test_notebook_source_import_route_rejects_unsafe_and_oversized_urls(
         self,
         fetch_page,

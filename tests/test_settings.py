@@ -166,6 +166,21 @@ class SettingsUiSourceTest(unittest.TestCase):
         self.assertIn("guided-session-save-note", html)
         self.assertIn("Start guided session", html)
 
+    def test_research_first_navigation_keeps_learning_as_secondary_depth(self):
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        with open(os.path.join(root, "web", "index.html"), encoding="utf-8") as fh:
+            html = fh.read()
+        self.assertIn('data-tooltip="Search and read"', html)
+        self.assertIn('aria-label="Research workspace"', html)
+        self.assertIn(">Workspace<", html)
+        self.assertIn("Optional learning", html)
+        self.assertIn("Save useful research", html)
+        self.assertIn("Save and query sources", html)
+        with open(os.path.join(root, "web", "app.js"), encoding="utf-8") as fh:
+            js = fh.read()
+        self.assertIn('head.textContent = "Ask about your research"', js)
+        self.assertIn('input").placeholder = "Ask a research question or paste a link"', js)
+
 
 class SettingsRoutesTest(unittest.TestCase):
     def tearDown(self):

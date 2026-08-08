@@ -526,8 +526,8 @@ function nav(view) {
   if (view === "home") {
     loadLearningHome();
     const head = document.querySelector(".asst-head span");
-    if (head) head.textContent = "Ask about your learning";
-    $("input").placeholder = "Ask about what you want to understand";
+    if (head) head.textContent = "Ask about your research";
+    $("input").placeholder = "Ask a research question or paste a link";
   } else if (view === "library") {
     loadFiles(); loadProjects();
     const head = document.querySelector(".asst-head span");

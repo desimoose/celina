@@ -402,6 +402,8 @@ h1, h2 { font-weight: 800; letter-spacing: -.03em; }
 .session-delete:disabled { opacity: .5; cursor: not-allowed; box-shadow: var(--inset-ash); }
 .learning-home-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 34px 42px 24px; }
 .learning-home-head-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.learning-home-head-actions .btn:first-child { border-color: var(--ash); color: var(--graphite); }
+.learning-home-head-actions .btn:first-child:hover:not(:disabled) { border-color: var(--ember); color: var(--ember-text); }
 .learning-home-head h2 { margin: 4px 0 8px; font-size: 32px; line-height: 1.05; }
 .learning-home-head p { max-width: 58ch; margin: 0; color: var(--graphite); font-size: 14px; line-height: 1.5; }
 .learning-home-momentum { display: grid; grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(120px, .7fr)); gap: 1px; margin: 0 42px; overflow: hidden; border-radius: var(--radius); background: var(--ash); box-shadow: var(--shadow-soft); }

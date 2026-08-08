@@ -1,4 +1,5 @@
 import os
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -60,6 +61,26 @@ class ProjectsTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "project path escapes projects root"):
             projects._project_dir("linked")
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction test")
+    def test_save_output_rejects_replaced_outputs_junction(self):
+        project = projects.create_project("Junction outputs")
+        outputs = Path(self.root) / project["id"] / "outputs"
+        outputs.rmdir()
+        outside = Path(self.temp.name) / "outside"
+        outside.mkdir()
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(outputs), str(outside)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            self.skipTest(f"junction creation is unavailable: {result.stderr.strip()}")
+
+        with self.assertRaisesRegex(ValueError, "output path escapes project"):
+            projects.save_output(project["id"], "escaped", "text", "secret")
+        self.assertEqual(list(outside.iterdir()), [])
 
     def test_concurrent_output_writes_get_distinct_atomic_files(self):
         project = projects.create_project("Concurrent outputs")

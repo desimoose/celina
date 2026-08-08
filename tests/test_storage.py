@@ -54,6 +54,18 @@ class StorageTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             storage.safe_child(self.root, os.path.join("link", "secret.txt"))
 
+    def test_safe_child_rejects_in_root_symlink_component(self):
+        target = self.root / "target"
+        target.mkdir()
+        link = self.root / "link"
+        try:
+            link.symlink_to(target, target_is_directory=True)
+        except OSError as exc:
+            self.skipTest(f"directory symlinks are unavailable: {exc}")
+
+        with self.assertRaises(ValueError):
+            storage.safe_child(self.root, os.path.join("link", "state.json"))
+
     @unittest.skipUnless(os.name == "nt", "Windows junction test")
     def test_safe_child_rejects_junction_escape(self):
         outside = Path(self.temp.name) / "outside"
@@ -70,6 +82,23 @@ class StorageTest(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             storage.safe_child(self.root, os.path.join("junction", "secret.txt"))
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction test")
+    def test_safe_child_rejects_in_root_junction_component(self):
+        target = self.root / "target"
+        target.mkdir()
+        junction = self.root / "junction"
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(junction), str(target)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            self.skipTest(f"junction creation is unavailable: {result.stderr.strip()}")
+
+        with self.assertRaises(ValueError):
+            storage.safe_child(self.root, os.path.join("junction", "state.json"))
 
     def test_interrupted_atomic_write_leaves_previous_json_readable(self):
         target = self.root / "state.json"

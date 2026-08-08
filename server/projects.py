@@ -124,7 +124,10 @@ def save_output(project_id, title, format_id, content):
     meta = _read_meta(directory)
     if not meta:
         raise ValueError("unknown project")
-    outputs_dir = os.path.join(directory, "outputs")
+    try:
+        outputs_dir = storage.safe_child(directory, "outputs")
+    except ValueError:
+        raise ValueError("output path escapes project") from None
     with storage.locked(outputs_dir):
         os.makedirs(outputs_dir, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M-%S")

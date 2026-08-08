@@ -6,6 +6,7 @@ import threading
 import time
 import unittest
 from datetime import datetime, timezone
+from unittest import mock
 
 SERVER = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "server"))
 if SERVER not in sys.path:
@@ -49,6 +50,11 @@ class SessionJanitorTest(unittest.TestCase):
         expired = self._make_stopped()
         active_incognito = self.store.create(incognito=True)
         stopped_incognito = self._make_stopped(incognito=True)
+        notebooks = os.path.join(self.temp.name, "notebooks")
+        os.makedirs(notebooks)
+        notebook = os.path.join(notebooks, "kept-notebook.json")
+        with open(notebook, "w", encoding="utf-8") as handle:
+            handle.write('{"title":"keep me"}')
 
         janitor = app.SessionJanitor(
             self.store,
@@ -63,6 +69,10 @@ class SessionJanitorTest(unittest.TestCase):
         self.assertIsNone(self.store.get(expired))
         self.assertIsNotNone(self.store.get(active_incognito.session_id))
         self.assertIsNone(self.store.get(stopped_incognito))
+        self.assertFalse(any(self.store.audit_deleted(expired).values()))
+        self.assertFalse(any(self.store.audit_deleted(stopped_incognito).values()))
+        with open(notebook, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), '{"title":"keep me"}')
 
     def test_startup_cleanup_removes_orphaned_active_incognito(self):
         active_incognito = self.store.create(incognito=True)
@@ -76,6 +86,31 @@ class SessionJanitorTest(unittest.TestCase):
 
         self.assertEqual(removed, [active_incognito.session_id])
         self.assertIsNone(self.store.get(active_incognito.session_id))
+
+    def test_janitor_retries_a_marked_incomplete_deletion(self):
+        expired = self._make_stopped()
+        janitor = app.SessionJanitor(
+            self.store,
+            retention_provider=lambda: 3600,
+            interval_seconds=0.01,
+        )
+
+        with mock.patch.object(
+            sessions.shutil,
+            "rmtree",
+            side_effect=OSError("filesystem busy"),
+        ):
+            first_removed = janitor.run_once()
+
+        self.assertEqual(first_removed, [])
+        self.assertTrue(
+            self.store.audit_deleted(expired)["deletion_failure_marker_exists"]
+        )
+
+        second_removed = janitor.run_once()
+
+        self.assertEqual(second_removed, [expired])
+        self.assertFalse(any(self.store.audit_deleted(expired).values()))
 
 
 class ServerJanitorLifecycleTest(unittest.TestCase):

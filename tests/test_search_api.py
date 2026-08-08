@@ -452,6 +452,25 @@ class SearchApiTest(unittest.TestCase):
         self.assertTrue(created["incognito"])
         session_dir = os.path.join(self.session_root, created["session_id"])
         self.assertTrue(os.path.isdir(session_dir))
+        os.makedirs(os.path.join(session_dir, "extracted"))
+        with open(
+            os.path.join(session_dir, "extracted", "page.txt"),
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            handle.write("incognito evidence")
+        with open(os.path.join(session_dir, "search.tmp"), "w", encoding="utf-8") as handle:
+            handle.write("incognito query")
+        for suffix in ("-wal", "-shm"):
+            with open(
+                os.path.join(session_dir, "ledger.sqlite3" + suffix), "wb"
+            ) as handle:
+                handle.write(b"temporary")
+        notebooks = os.path.join(self.workspace_root, "notebooks")
+        os.makedirs(notebooks, exist_ok=True)
+        notebook = os.path.join(notebooks, "kept-notebook.json")
+        with open(notebook, "w", encoding="utf-8") as handle:
+            handle.write('{"title":"keep me"}')
 
         status, _headers, body = self._request(
             "POST",
@@ -462,7 +481,45 @@ class SearchApiTest(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(body)["deleted"])
-        self.assertFalse(os.path.exists(session_dir))
+        self.assertFalse(any(
+            self.server.session_store.audit_deleted(created["session_id"]).values()
+        ))
+        with open(notebook, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), '{"title":"keep me"}')
+
+    def test_delete_refuses_to_claim_success_when_audit_finds_residue(self):
+        created, cookie, csrf = self._create_session()
+        session_dir = os.path.join(self.session_root, created["session_id"])
+        claimed = app.sessions.DeleteResult(created["session_id"], True, ())
+
+        with mock.patch.object(
+            self.server.session_store,
+            "delete",
+            return_value=claimed,
+        ):
+            status, _headers, body = self._request(
+                "DELETE",
+                "/api/sessions/" + created["session_id"],
+                headers=self._mutation_headers(cookie, csrf),
+            )
+
+        self.assertEqual(status, 500)
+        self.assertEqual(json.loads(body), {"error": "could not delete session"})
+        self.assertNotIn('"deleted": true', body.lower())
+        self.assertTrue(os.path.isdir(session_dir))
+
+    def test_settings_disclose_hosted_provider_retention_limits(self):
+        cookie, _csrf = self._launch()
+
+        status, _headers, body = self._request(
+            "GET", "/api/settings", headers={"Cookie": cookie}
+        )
+
+        self.assertEqual(status, 200)
+        disclosure = json.loads(body)["provider_privacy"]["openai"].lower()
+        self.assertIn("question/context sent to provider", disclosure)
+        self.assertIn("provider retention policies apply", disclosure)
+        self.assertIn("local session deletion does not delete provider copies", disclosure)
 
     def test_expired_stopped_sessions_are_deleted_on_server_start(self):
         created, cookie, csrf = self._create_session()

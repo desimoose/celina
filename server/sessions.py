@@ -16,10 +16,14 @@ import sqlite3
 import uuid
 
 import paths
+import storage
 
 
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 _DB_NAME = "ledger.sqlite3"
+_DB_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+_DELETE_MARKER_PREFIX = ".delete-failed-"
+_DELETE_MARKER_SUFFIX = ".json"
 _SCHEMA_VERSION = 1
 
 
@@ -145,6 +149,25 @@ class SessionStore:
                 result = self.delete(item.session_id)
                 if result.deleted:
                     removed.append(item.session_id)
+        return removed
+
+    def retry_failed_deletions(self):
+        """Retry deletions recorded by metadata-only failure markers."""
+        removed = []
+        for name in sorted(os.listdir(self.root)):
+            if not (
+                name.startswith(_DELETE_MARKER_PREFIX)
+                and name.endswith(_DELETE_MARKER_SUFFIX)
+            ):
+                continue
+            session_id = name[
+                len(_DELETE_MARKER_PREFIX):-len(_DELETE_MARKER_SUFFIX)
+            ]
+            if not _SAFE_ID.fullmatch(session_id):
+                continue
+            result = self.delete(session_id)
+            if result.deleted:
+                removed.append(session_id)
         return removed
 
     def mark_stopped(self, session_id):
@@ -400,17 +423,145 @@ class SessionStore:
 
     def delete(self, session_id):
         directory = self._directory(session_id, create=False)
-        if not os.path.exists(directory):
-            return DeleteResult(session_id, True, ())
-        try:
-            shutil.rmtree(directory)
-        except OSError as error:
+        database = os.path.join(directory, _DB_NAME)
+        initial_audit = self.audit_deleted(session_id)
+        if (
+            self._audit_has_session_residue(initial_audit)
+            and not initial_audit["deletion_failure_marker_exists"]
+            and not self._write_delete_failure_marker(session_id, initial_audit)
+        ):
             return DeleteResult(
                 session_id,
                 False,
-                (f"{type(error).__name__}: {error}",),
+                ("local deletion could not start",),
             )
-        return DeleteResult(session_id, not os.path.exists(directory), ())
+        if os.path.isfile(database):
+            self._scrub_ledger(database, session_id)
+        for suffix in _DB_SIDECAR_SUFFIXES:
+            try:
+                os.remove(database + suffix)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+        if os.path.lexists(directory):
+            try:
+                shutil.rmtree(directory)
+            except OSError:
+                pass
+
+        audit = self.audit_deleted(session_id)
+        if self._audit_has_session_residue(audit):
+            self._write_delete_failure_marker(session_id, audit)
+            return DeleteResult(
+                session_id,
+                False,
+                ("local session residue remains",),
+            )
+
+        marker = self._delete_failure_marker(session_id)
+        try:
+            os.remove(marker)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return DeleteResult(
+                session_id,
+                False,
+                ("local deletion verification incomplete",),
+            )
+        if any(self.audit_deleted(session_id).values()):
+            return DeleteResult(
+                session_id,
+                False,
+                ("local deletion verification incomplete",),
+            )
+        return DeleteResult(session_id, True, ())
+
+    def audit_deleted(self, session_id):
+        """Return metadata-only evidence about local deletion residue."""
+        directory = self._directory(session_id, create=False)
+        database = os.path.join(directory, _DB_NAME)
+        sqlite_row_exists = False
+        if os.path.isfile(database):
+            try:
+                connection = sqlite3.connect(
+                    "file:%s?mode=ro" % database.replace("\\", "/"),
+                    uri=True,
+                    timeout=1,
+                )
+                try:
+                    row = connection.execute(
+                        "SELECT 1 FROM session WHERE session_id = ? LIMIT 1",
+                        (session_id,),
+                    ).fetchone()
+                    sqlite_row_exists = row is not None
+                finally:
+                    connection.close()
+            except (OSError, sqlite3.DatabaseError):
+                sqlite_row_exists = False
+        return {
+            "directory_exists": os.path.lexists(directory),
+            "ledger_exists": os.path.isfile(database),
+            "sidecar_count": sum(
+                1
+                for suffix in _DB_SIDECAR_SUFFIXES
+                if os.path.lexists(database + suffix)
+            ),
+            "sqlite_row_exists": sqlite_row_exists,
+            "deletion_failure_marker_exists": os.path.isfile(
+                self._delete_failure_marker(session_id)
+            ),
+        }
+
+    def _scrub_ledger(self, database, session_id):
+        """Best-effort logical erasure before removing the ledger files."""
+        try:
+            with self._connection(database) as connection:
+                connection.execute("PRAGMA secure_delete = ON")
+                connection.execute("BEGIN IMMEDIATE")
+                for table in ("traffic", "token_usage", "event"):
+                    connection.execute(
+                        "DELETE FROM %s WHERE session_id = ?" % table,
+                        (session_id,),
+                    )
+                connection.execute(
+                    "DELETE FROM session WHERE session_id = ?",
+                    (session_id,),
+                )
+                connection.commit()
+                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except (OSError, sqlite3.DatabaseError):
+            pass
+
+    @staticmethod
+    def _audit_has_session_residue(audit):
+        return any((
+            audit["directory_exists"],
+            audit["ledger_exists"],
+            audit["sidecar_count"],
+            audit["sqlite_row_exists"],
+        ))
+
+    def _delete_failure_marker(self, session_id):
+        if not isinstance(session_id, str) or not _SAFE_ID.fullmatch(session_id):
+            raise ValueError("invalid session id")
+        return os.path.join(
+            self.root,
+            _DELETE_MARKER_PREFIX + session_id + _DELETE_MARKER_SUFFIX,
+        )
+
+    def _write_delete_failure_marker(self, session_id, audit):
+        marker_audit = dict(audit)
+        marker_audit["deletion_failure_marker_exists"] = True
+        try:
+            storage.atomic_write_json(
+                self._delete_failure_marker(session_id),
+                marker_audit,
+            )
+        except OSError:
+            return False
+        return True
 
     def _set_state(self, session_id, state):
         database = self._database(session_id)

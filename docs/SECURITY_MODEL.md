@@ -85,8 +85,16 @@ Celina does not guarantee anonymity, VPN/proxy/Tor behavior, protection from a
 malicious process with the same OS account, recovery from disk failure without
 backups, or control over a hosted provider's retention, training, abuse
 monitoring, or logs. Incognito cannot control third-party provider retention.
-The user remains responsible for provider terms, credentials, OS access, and
-the trustworthiness of files they deliberately keep.
+Normal and Incognito deletion remove and verify Celina-local session residue
+only. They do not send deletion requests to hosted providers and cannot delete
+question or context copies already retained in provider logs, abuse-monitoring
+systems, backups, or training pipelines. Provider retention periods and data
+use depend on the selected provider, account plan, and current provider policy;
+users must review those terms before sending a request. Celina labels hosted
+providers as receiving question/context, with provider retention policies
+applying, before requests are sent. The user remains responsible for provider
+terms, credentials, OS access, and the trustworthiness of files they
+deliberately keep.
 
 ## Review record and residual risks
 
@@ -95,7 +103,7 @@ the trustworthiness of files they deliberately keep.
 | Public research fetch | Network, local parser | `URL_PUBLIC_ONLY`, `BOUNDED_MUTATION` | Validate each target and cap response/extraction | DNS and OS networking are outside Celina's full control |
 | Tutor context | Questions, source text, keys | `UNTRUSTED_SOURCE_DATA`, `NO_SECRET_OUTPUT` | Label evidence, keep system instructions separate, bound context | A provider can retain or mishandle data it receives |
 | Notebook/project writes | Kept work | `ATOMIC_LOCAL_STATE`, `BOUNDED_MUTATION` | Root-bound, atomic local writes and recovery guidance | Hardware/filesystem failure can still destroy data |
-| Session privacy | Temporary traffic | `EPHEMERAL_INCOGNITO` | Delete local session records and verify cleanup | Provider/site/server OS logs may remain outside Celina |
+| Session privacy | Temporary traffic | `EPHEMERAL_INCOGNITO` | Delete local session records; audit directory, ledger, SQLite row, and sidecars; retain a metadata-only retry marker on incomplete cleanup | Notebook files remain kept work; provider/site/server OS logs and backups may remain outside Celina |
 | Release artifacts | Code and bundled tools | `NO_TELEMETRY`, `NO_SECRET_OUTPUT` | Review, tests, hashes, and release checks | A compromised build environment remains a supply-chain risk |
 
 ## Verification

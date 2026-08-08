@@ -33,10 +33,13 @@ class SessionJanitor:
         return True
 
     def run_once(self, include_active_incognito=False):
-        return self.store.cleanup(
+        retry = getattr(self.store, "retry_failed_deletions", None)
+        retried = retry() if callable(retry) else []
+        removed = self.store.cleanup(
             self.retention_provider(),
             include_active_incognito=include_active_incognito,
         )
+        return list(dict.fromkeys([*retried, *removed]))
 
     def _loop(self):
         while not self._stop_event.wait(self.interval_seconds):

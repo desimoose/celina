@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 import uuid
+from unittest import mock
 
 SERVER = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "server"))
 if SERVER not in sys.path:
@@ -147,13 +148,16 @@ class SessionStoreTest(unittest.TestCase):
             list(range(1, 81)),
         )
 
-    def test_delete_removes_ledger_sidecars_and_extracted_content(self):
+    def test_audit_deleted_reports_only_safe_residue_metadata(self):
         created = self.store.create()
         directory = os.path.join(self.temp.name, created.session_id)
         extracted = os.path.join(directory, "extracted")
         os.makedirs(extracted)
         with open(os.path.join(extracted, "page.txt"), "w", encoding="utf-8") as fh:
             fh.write("temporary evidence")
+        with open(os.path.join(directory, "search.tmp"), "w", encoding="utf-8") as fh:
+            fh.write("temporary query")
+        self.store.append_event(_event(created.session_id, 1))
         for suffix in ("-wal", "-shm"):
             with open(
                 os.path.join(directory, "ledger.sqlite3" + suffix),
@@ -161,24 +165,90 @@ class SessionStoreTest(unittest.TestCase):
             ) as fh:
                 fh.write(b"temporary")
 
+        before = self.store.audit_deleted(created.session_id)
+
+        self.assertEqual(before, {
+            "directory_exists": True,
+            "ledger_exists": True,
+            "sidecar_count": 2,
+            "sqlite_row_exists": True,
+            "deletion_failure_marker_exists": False,
+        })
+        self.assertTrue(all(
+            isinstance(value, (bool, int)) for value in before.values()
+        ))
+
         result = self.store.delete(created.session_id)
 
         self.assertTrue(result.deleted)
         self.assertEqual(result.errors, ())
-        self.assertFalse(os.path.exists(directory))
-        self.assertIsNone(self.store.get(created.session_id))
+        self.assertEqual(self.store.audit_deleted(created.session_id), {
+            "directory_exists": False,
+            "ledger_exists": False,
+            "sidecar_count": 0,
+            "sqlite_row_exists": False,
+            "deletion_failure_marker_exists": False,
+        })
 
-    def test_delete_does_not_touch_workspace_sibling(self):
-        workspace = os.path.join(self.temp.name, "workspace")
-        os.makedirs(workspace)
-        kept = os.path.join(workspace, "kept.md")
+    def test_delete_does_not_touch_notebook_files(self):
+        notebooks = os.path.join(self.temp.name, "notebooks")
+        os.makedirs(notebooks)
+        kept = os.path.join(notebooks, "kept-notebook.json")
         with open(kept, "w", encoding="utf-8") as fh:
-            fh.write("keep me")
+            fh.write('{"title":"keep me"}')
         created = self.store.create()
 
         self.store.delete(created.session_id)
 
         self.assertTrue(os.path.isfile(kept))
+        with open(kept, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), '{"title":"keep me"}')
+
+    def test_incomplete_delete_is_not_success_and_keeps_safe_marker(self):
+        created = self.store.create()
+        directory = os.path.join(self.temp.name, created.session_id)
+        with open(os.path.join(directory, "private.tmp"), "w", encoding="utf-8") as fh:
+            fh.write("private session evidence")
+
+        with mock.patch.object(
+            sessions.shutil,
+            "rmtree",
+            side_effect=OSError("private session evidence at a secret path"),
+        ):
+            result = self.store.delete(created.session_id)
+
+        self.assertFalse(result.deleted)
+        self.assertEqual(result.errors, ("local session residue remains",))
+        audit = self.store.audit_deleted(created.session_id)
+        self.assertTrue(audit["directory_exists"])
+        self.assertTrue(audit["deletion_failure_marker_exists"])
+        markers = [
+            name for name in os.listdir(self.temp.name)
+            if name.startswith(".delete-failed-")
+        ]
+        self.assertEqual(len(markers), 1)
+        with open(os.path.join(self.temp.name, markers[0]), encoding="utf-8") as fh:
+            marker_text = fh.read()
+        self.assertNotIn("private session evidence", marker_text)
+        self.assertNotIn(directory, marker_text)
+
+    def test_delete_does_not_start_without_a_safe_failure_marker(self):
+        created = self.store.create()
+
+        with mock.patch.object(
+            sessions.storage,
+            "atomic_write_json",
+            side_effect=OSError("marker unavailable"),
+        ):
+            result = self.store.delete(created.session_id)
+
+        self.assertFalse(result.deleted)
+        self.assertEqual(result.errors, ("local deletion could not start",))
+        audit = self.store.audit_deleted(created.session_id)
+        self.assertTrue(audit["directory_exists"])
+        self.assertTrue(audit["ledger_exists"])
+        self.assertTrue(audit["sqlite_row_exists"])
+        self.assertFalse(audit["deletion_failure_marker_exists"])
 
 
 if __name__ == "__main__":

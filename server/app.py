@@ -146,7 +146,11 @@ def provider_privacy_state():
         if spec["key_env"] is None:
             out[name] = "Ollama — stays on this machine"
         else:
-            out[name] = "%s — question/context sent to provider" % spec["label"]
+            out[name] = (
+                "%s — question/context sent to provider; provider retention "
+                "policies apply; local session deletion does not delete provider copies"
+                % spec["label"]
+            )
     return out
 
 
@@ -605,7 +609,8 @@ class Handler(BaseHTTPRequestHandler):
             result = self.server.session_store.delete(session_id)
         except (OSError, ValueError):
             return self._not_found()
-        if not result.deleted:
+        audit = self.server.session_store.audit_deleted(session_id)
+        if not result.deleted or any(audit.values()):
             return self._send(500, {"error": "could not delete session"})
         self.server.recovery_required_session_ids.discard(session_id)
         return self._send(200, {"session_id": session_id, "deleted": True})
@@ -707,7 +712,8 @@ class Handler(BaseHTTPRequestHandler):
         self.server.recovery_required_session_ids.discard(session_id)
         if session.incognito:
             result = self.server.session_store.delete(session_id)
-            if not result.deleted:
+            audit = self.server.session_store.audit_deleted(session_id)
+            if not result.deleted or any(audit.values()):
                 return self._send(500, {"error": "could not delete incognito session"})
             return self._send(200, {
                 **self._serialized_session(session),

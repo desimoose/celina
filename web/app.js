@@ -40,6 +40,64 @@ const escapeHtml = (s) =>
 const looksLikeUrl = (s) => /^https?:\/\//i.test(s);
 const csrfToken = () => document.querySelector('meta[name="celina-csrf"]')?.content || "";
 const searchCapture = () => window.SearchCapture || {};
+const FOCUS_PRESETS = {
+  classic: { workSeconds: 25 * 60, shortBreakSeconds: 5 * 60, longBreakSeconds: 15 * 60 },
+  deep: { workSeconds: 50 * 60, shortBreakSeconds: 10 * 60, longBreakSeconds: 20 * 60 },
+  sprint: { workSeconds: 15 * 60, shortBreakSeconds: 3 * 60, longBreakSeconds: 10 * 60 },
+};
+
+let focusTimer = null;
+let focusTicker = null;
+
+function focusPhaseLabel(phase) {
+  return phase === "long_break" ? "Long break" : phase === "short_break" ? "Short break" : "Focus block";
+}
+
+function renderFocusTimer(snapshot) {
+  const strip = $("focus-strip");
+  const phase = $("focus-phase");
+  const time = $("focus-time");
+  const status = $("focus-status");
+  const count = $("focus-count");
+  const toggle = $("focus-toggle");
+  const preset = $("focus-preset");
+  if (!strip || !phase || !time || !status || !count || !toggle || !preset) return;
+
+  const label = focusPhaseLabel(snapshot.phase);
+  phase.textContent = label;
+  strip.dataset.phase = snapshot.phase;
+  time.textContent = window.CelinaPomodoro.formatDuration(snapshot.remainingSeconds);
+  time.dateTime = `PT${Math.max(0, snapshot.remainingSeconds)}S`;
+  count.textContent = `${snapshot.completedFocuses} completed today`;
+  status.textContent = !snapshot.started
+    ? "Ready when you are"
+    : snapshot.running ? `${label} in progress` : "Paused — resume when ready";
+  toggle.textContent = snapshot.running ? "Pause" : snapshot.started ? "Resume focus" : "Start focus";
+  preset.value = snapshot.preset;
+  preset.disabled = snapshot.running;
+}
+
+function setupFocusTimer() {
+  if (!window.CelinaPomodoro || !(typeof window.CelinaPomodoro.PomodoroTimer === "function")) return;
+  const preset = $("focus-preset");
+  const initialPreset = FOCUS_PRESETS[preset?.value] ? preset.value : "classic";
+  focusTimer = new window.CelinaPomodoro.PomodoroTimer({
+    preset: initialPreset,
+    ...FOCUS_PRESETS[initialPreset],
+    onChange: renderFocusTimer,
+  });
+  $("focus-toggle").onclick = () => {
+    if (focusTimer.snapshot().running) focusTimer.pause();
+    else focusTimer.start();
+  };
+  $("focus-reset").onclick = () => focusTimer.reset();
+  preset.onchange = () => {
+    const next = preset.value;
+    if (FOCUS_PRESETS[next]) focusTimer.setPreset(next, FOCUS_PRESETS[next]);
+  };
+  focusTicker = window.setInterval(() => focusTimer.tick(), 1000);
+  renderFocusTimer(focusTimer.snapshot());
+}
 
 // ---------- accessibility: focus trap for modal-style overlays ----------
 
@@ -2322,6 +2380,7 @@ if (typeof module !== "undefined" && module.exports) {
     });
   });
   renderMascotPanel();
+  setupFocusTimer();
 
   boot();
 }

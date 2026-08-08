@@ -449,6 +449,26 @@ h1, h2 { font-weight: 800; letter-spacing: -.03em; }
 .research-loop-questions li.is-current::before { background: var(--ember); }
 .research-loop-questions li.is-done::before { background: var(--ok); }
 
+/* ---------- local focus timer ---------- */
+.focus-strip {
+  display: grid; grid-template-columns: minmax(150px, 1fr) auto minmax(360px, 1.3fr);
+  align-items: center; gap: 18px; margin: 0 32px 14px; padding: 12px 14px;
+  background: var(--cream); border-radius: var(--radius-lg); box-shadow: var(--inset-ash);
+}
+.focus-copy { display: grid; gap: 1px; min-width: 0; }
+.focus-copy strong { font-size: 13px; }
+.focus-copy > span:last-child { color: var(--graphite); font-family: var(--mono); font-size: 10px; }
+.focus-strip[data-phase="short_break"] .focus-copy strong,
+.focus-strip[data-phase="long_break"] .focus-copy strong { color: var(--ember-text); }
+.focus-clock { display: grid; justify-items: center; gap: 1px; min-width: 116px; }
+.focus-clock time { color: var(--ink); font-family: var(--mono); font-size: 27px; font-weight: 800; letter-spacing: -.05em; line-height: 1; }
+.focus-clock span { color: var(--graphite); font-size: 10px; white-space: nowrap; }
+.focus-controls { display: flex; align-items: end; justify-content: flex-end; gap: 8px; }
+.focus-preset-label { display: grid; gap: 3px; min-width: 148px; }
+.focus-preset-label > span { color: var(--graphite); font-family: var(--mono); font-size: 10px; }
+.focus-preset-label select { min-height: 36px; padding: 7px 9px; border: 1px solid var(--ash); border-radius: var(--radius); color: var(--ink); background: var(--white); font: inherit; font-size: 11px; }
+.focus-controls .btn { padding: 9px 13px; white-space: nowrap; }
+
 /* ---------- buttons ---------- */
 .btn {
   font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
@@ -760,6 +780,10 @@ h1, h2 { font-weight: 800; letter-spacing: -.03em; }
   .results-toolbar { flex-direction: column; align-items: stretch; }
   .results-toolbar-actions { width: 100%; align-items: stretch; flex-direction: column; }
   .results-notebook-select select { min-width: 0; width: 100%; }
+  .focus-strip { grid-template-columns: 1fr auto; margin-left: 18px; margin-right: 18px; }
+  .focus-controls { grid-column: 1 / -1; justify-content: stretch; }
+  .focus-preset-label { flex: 1; }
+  .focus-controls .btn { flex: 0 0 auto; }
   .notebook-layout { display: flex; flex-direction: column; overflow-y: auto; }
   .notebook-sources { border-right: 0; border-bottom: 1px solid var(--ash); }
   .notebook-main { padding: 24px 18px; overflow: visible; }

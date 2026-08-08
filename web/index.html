@@ -133,6 +133,29 @@
         <div class="status" id="engine"></div>
         <div id="engine-announce" class="sr-only" aria-live="polite" aria-atomic="true"></div>
       </div>
+      <section class="focus-strip" id="focus-strip" aria-label="Pomodoro focus timer" data-phase="work">
+        <div class="focus-copy">
+          <span class="eyebrow">Pomodoro</span>
+          <strong id="focus-phase">Focus block</strong>
+          <span id="focus-count">0 completed today</span>
+        </div>
+        <div class="focus-clock" aria-live="polite">
+          <time id="focus-time" datetime="PT25M">25:00</time>
+          <span id="focus-status">Ready when you are</span>
+        </div>
+        <div class="focus-controls">
+          <label class="focus-preset-label">
+            <span>Preset</span>
+            <select id="focus-preset" aria-label="Pomodoro preset">
+              <option value="classic">Classic · 25 / 5</option>
+              <option value="deep">Deep work · 50 / 10</option>
+              <option value="sprint">Sprint · 15 / 3</option>
+            </select>
+          </label>
+          <button id="focus-toggle" class="btn btn--primary" type="button">Start focus</button>
+          <button id="focus-reset" class="btn btn--ghost" type="button">Reset</button>
+        </div>
+      </section>
       <section class="research-loop" id="research-loop" hidden aria-label="First-pass questions">
         <div class="research-loop-head">
           <span>First pass</span>
@@ -451,6 +474,7 @@
 </div>
 
 <script src="/search_capture.js"></script>
+<script src="/pomodoro.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

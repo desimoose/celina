@@ -181,6 +181,21 @@ class SettingsUiSourceTest(unittest.TestCase):
         self.assertIn('head.textContent = "Ask about your research"', js)
         self.assertIn('input").placeholder = "Ask a research question or paste a link"', js)
 
+    def test_pomodoro_focus_widget_is_local_and_visible_in_research_workspace(self):
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        with open(os.path.join(root, "web", "index.html"), encoding="utf-8") as fh:
+            html = fh.read()
+        with open(os.path.join(root, "web", "app.js"), encoding="utf-8") as fh:
+            js = fh.read()
+
+        self.assertIn('aria-label="Pomodoro focus timer"', html)
+        self.assertIn('id="focus-time"', html)
+        self.assertIn('id="focus-toggle"', html)
+        self.assertIn('id="focus-preset"', html)
+        self.assertIn('src="/pomodoro.js"', html)
+        self.assertIn('new window.CelinaPomodoro.PomodoroTimer', js)
+        self.assertIn('completed today', js)
+
 
 class SettingsRoutesTest(unittest.TestCase):
     def tearDown(self):

@@ -6,6 +6,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from pathlib import Path
 from unittest import mock
 
 
@@ -46,6 +47,20 @@ class NotebooksTest(unittest.TestCase):
         self.assertEqual(
             self.notebooks.read_notebook(first["id"])["title"], "Sleep research"
         )
+
+    def test_notebook_path_rejects_symlink_escape_with_existing_error(self):
+        root = Path(self.data_root) / "workspace" / "notebooks"
+        root.mkdir(parents=True, exist_ok=True)
+        outside = Path(self.data_root) / "outside.json"
+        outside.write_text("{}", encoding="utf-8")
+        link = root / "linked.json"
+        try:
+            link.symlink_to(outside)
+        except OSError as exc:
+            self.skipTest(f"file symlinks are unavailable: {exc}")
+
+        with self.assertRaisesRegex(ValueError, "notebook path escapes workspace"):
+            self.notebooks._notebook_path("linked")
 
     def test_add_source_validates_required_fields_and_safe_ids(self):
         notebook = self.notebooks.create_notebook("Caffeine")

@@ -2,6 +2,7 @@ import os
 import tempfile
 import threading
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import sys
@@ -45,6 +46,20 @@ class ProjectsTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.join(self.root, first["id"], "outputs")))
         with self.assertRaises(ValueError):
             projects.save_output(first["id"], "bad", "pdf", "no")
+
+    def test_project_dir_rejects_symlink_escape_with_existing_error(self):
+        root = Path(self.root)
+        root.mkdir(parents=True, exist_ok=True)
+        outside = Path(self.temp.name) / "outside"
+        outside.mkdir()
+        link = root / "linked"
+        try:
+            link.symlink_to(outside, target_is_directory=True)
+        except OSError as exc:
+            self.skipTest(f"directory symlinks are unavailable: {exc}")
+
+        with self.assertRaisesRegex(ValueError, "project path escapes projects root"):
+            projects._project_dir("linked")
 
     def test_concurrent_output_writes_get_distinct_atomic_files(self):
         project = projects.create_project("Concurrent outputs")

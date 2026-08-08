@@ -54,10 +54,10 @@ def _notebook_path(notebook_id):
     if not isinstance(notebook_id, str) or not _SAFE_ID.fullmatch(notebook_id):
         raise ValueError("invalid notebook id")
     root = _workspace_root()
-    target = os.path.realpath(os.path.join(root, f"{notebook_id}.json"))
-    if target != root and not target.startswith(root + os.sep):
-        raise ValueError("notebook path escapes workspace")
-    return target
+    try:
+        return storage.safe_child(root, f"{notebook_id}.json")
+    except ValueError:
+        raise ValueError("notebook path escapes workspace") from None
 
 
 def _read_json(path):

@@ -184,11 +184,10 @@ def update_env(updates):
 def safe_workspace_path(rel):
     """Resolve a workspace-relative path, refusing anything that escapes it."""
     ws = paths.workspace_dir()
-    target = os.path.realpath(os.path.join(ws, rel))
-    root = os.path.realpath(ws)
-    if target != root and not target.startswith(root + os.sep):
-        raise ValueError("path escapes the workspace")
-    return target
+    try:
+        return storage.safe_child(ws, rel)
+    except ValueError:
+        raise ValueError("path escapes the workspace") from None
 
 
 class Handler(BaseHTTPRequestHandler):

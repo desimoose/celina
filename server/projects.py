@@ -40,11 +40,11 @@ def _slugify(value):
 def _project_dir(project_id):
     if not isinstance(project_id, str) or not _SAFE_ID.fullmatch(project_id):
         raise ValueError("invalid project id")
-    root = os.path.realpath(paths.projects_dir())
-    target = os.path.realpath(os.path.join(root, project_id))
-    if target != root and not target.startswith(root + os.sep):
-        raise ValueError("project path escapes projects root")
-    return target
+    root = paths.projects_dir()
+    try:
+        return storage.safe_child(root, project_id)
+    except ValueError:
+        raise ValueError("project path escapes projects root") from None
 
 
 def _read_meta(directory):

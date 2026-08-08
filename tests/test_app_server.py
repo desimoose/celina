@@ -238,6 +238,41 @@ class NotebookApiTest(unittest.TestCase):
         self.assertEqual(notebook["learning_path"]["goal"], "Improve sleep habits")
         self.assertEqual(notebook["learning_path"]["depth"], "graduate")
 
+    @mock.patch.object(app.gateway, "chat")
+    def test_notebook_tutor_returns_answer_and_citation_metadata(self, chat):
+        created, cookie, csrf = self._create_notebook("Tutor API", "Understand a paper")
+        source_status, _headers, _body = self._request(
+            "POST",
+            "/api/notebooks/tutor-api/sources",
+            {
+                "title": "Paper",
+                "url": "https://example.com/paper",
+                "kind": "paper",
+                "excerpt": "A bounded excerpt.",
+            },
+            self._mutation_headers(cookie, csrf),
+        )
+        self.assertEqual(source_status, 201)
+        chat.return_value = {
+            "text": "The paper argues for attention [source-1].",
+            "provider": "ollama",
+            "model": "llama3.1:8b",
+        }
+
+        status, _headers, body = self._request(
+            "POST",
+            "/api/notebooks/tutor-api/tutor",
+            {"provider": "ollama", "question": "What is the main claim?"},
+            self._mutation_headers(cookie, csrf),
+        )
+
+        self.assertEqual(status, 200)
+        response = json.loads(body)
+        self.assertEqual(response["text"], chat.return_value["text"])
+        self.assertEqual(response["citations"][0]["source_id"], "source-1")
+        self.assertIn("Notebook: Tutor API", chat.call_args.kwargs["system"])
+        self.assertIn("[source-1-doc]", chat.call_args.kwargs["system"])
+
     def test_notebook_source_route_accepts_search_capture_metadata(self):
         created, cookie, csrf = self._create_notebook()
 

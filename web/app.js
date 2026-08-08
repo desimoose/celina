@@ -1576,12 +1576,32 @@ async function saveCurrent() {
 
 // ---------- assistant ----------
 
-function addMessage(role, text) {
+function addMessage(role, text, citations = []) {
   const div = document.createElement("div");
   div.className = "msg " + role;
   const who = role === "user" ? "you" : role === "err" ? "error" : "assistant";
   div.innerHTML = `<span class="who">${who}</span>`;
   div.appendChild(document.createTextNode(text));
+  if (role === "bot" && citations.length) {
+    const evidence = document.createElement("div");
+    evidence.className = "msg-citations";
+    const label = document.createElement("span");
+    label.className = "msg-citations-label";
+    label.textContent = "Notebook evidence";
+    evidence.appendChild(label);
+    citations.forEach((citation) => {
+      const item = citation.url ? document.createElement("a") : document.createElement("span");
+      item.className = "msg-citation";
+      item.textContent = `${citation.title || "Source"} · ${citation.label || "document"}`;
+      if (citation.url) {
+        item.href = citation.url;
+        item.target = "_blank";
+        item.rel = "noreferrer";
+      }
+      evidence.appendChild(item);
+    });
+    div.appendChild(evidence);
+  }
   $("log").appendChild(div);
   $("log").scrollTop = $("log").scrollHeight;
   return div;
@@ -1597,9 +1617,17 @@ async function send(e) {
   const pending = addMessage("bot", "thinking…");
   $("send").disabled = true;
   try {
-    const res = await fetch("/api/chat", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider: state.provider, messages: state.history, context: contextText() }),
+    const notebookTutor = state.view === "notebook" && state.activeNotebook;
+    const endpoint = notebookTutor
+      ? `/api/notebooks/${encodeURIComponent(state.activeNotebook.id)}/tutor`
+      : "/api/chat";
+    const body = notebookTutor
+      ? { provider: state.provider, question: text }
+      : { provider: state.provider, messages: state.history, context: contextText() };
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: notebookTutor ? notebookHeaders() : { "content-type": "application/json" },
+      body: JSON.stringify(body),
     }).then((r) => r.json());
     if (res.error) {
       pending.remove(); addMessage("err", res.error); state.history.pop();
@@ -1607,7 +1635,7 @@ async function send(e) {
       return;
     }
     pending.remove();
-    addMessage("bot", res.text);
+    addMessage("bot", res.text, res.citations || []);
     state.history.push({ role: "assistant", content: res.text });
     const u = res.usage || {};
     $("usage").textContent = `${res.provider} · ${res.model}` + (u.input_tokens ? ` · ${u.input_tokens} in / ${u.output_tokens} out` : "");

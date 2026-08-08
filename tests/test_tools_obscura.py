@@ -37,6 +37,30 @@ class FindObscuraTest(unittest.TestCase):
             os.environ.pop("CELINA_HOME", None)
 
 
+class PublicUrlValidationTest(unittest.TestCase):
+    def test_rejects_loopback_literal(self):
+        with self.assertRaises(ValueError):
+            tools.validate_public_http_url("http://127.0.0.1:8080/private")
+
+    def test_rejects_private_dns_result(self):
+        with mock.patch(
+            "tools.socket.getaddrinfo",
+            return_value=[(None, None, None, None, ("10.0.0.8", 443))],
+        ):
+            with self.assertRaises(ValueError):
+                tools.validate_public_http_url("https://internal.example/paper")
+
+    def test_allows_public_dns_result(self):
+        with mock.patch(
+            "tools.socket.getaddrinfo",
+            return_value=[(None, None, None, None, ("93.184.216.34", 443))],
+        ):
+            self.assertEqual(
+                tools.validate_public_http_url("https://example.com/paper"),
+                "https://example.com/paper",
+            )
+
+
 class ObscuraTrafficTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

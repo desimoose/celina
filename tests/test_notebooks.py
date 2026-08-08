@@ -274,6 +274,27 @@ class NotebooksTest(unittest.TestCase):
         self.assertLessEqual(len(context), self.notebooks._TUTOR_CONTEXT_LIMIT)
         self.assertNotIn("full document text full document text full document text", context)
 
+    def test_tutor_citations_return_bounded_source_metadata(self):
+        notebook = self.notebooks.create_notebook("Tutor citations")
+        self.notebooks.import_source(
+            notebook["id"],
+            {"url": "https://example.com/paper.pdf", "title": "Paper", "kind": "paper"},
+            {
+                "url": "https://example.com/paper.pdf",
+                "content_type": "application/pdf",
+                "engine": "obscura-pdf",
+                "text": "Readable paper text " * 100,
+                "pages": [{"page": 1, "text": "Evidence " * 100}],
+            },
+        )
+
+        citations = self.notebooks.tutor_citations(notebook["id"])
+
+        self.assertEqual(citations[0]["source_id"], "source-1")
+        self.assertEqual(citations[0]["label"], "p. 1")
+        self.assertEqual(citations[0]["title"], "Paper")
+        self.assertNotIn("text", citations[0])
+
     def test_store_uses_workspace_notebooks_files(self):
         notebook = self.notebooks.create_notebook("My notebook")
         target = os.path.join(self.data_root, "workspace", "notebooks", f"{notebook['id']}.json")

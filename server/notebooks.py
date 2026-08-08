@@ -476,13 +476,19 @@ def build_tutor_context(notebook_or_id):
         if excerpt:
             parts.append(f"Excerpt:\n{excerpt}")
         citation_lines = []
-        for citation in (source.get("citations") or [])[:_TUTOR_CONTEXT_CITATIONS_PER_SOURCE]:
+        source_citations = source.get("citations") or [{
+            "id": f"{source.get('id', 'source')}-doc",
+            "label": "document",
+            "text": excerpt or "Source-level evidence.",
+        }]
+        for citation in source_citations[:_TUTOR_CONTEXT_CITATIONS_PER_SOURCE]:
             if not isinstance(citation, dict):
                 continue
             label = _truncate(citation.get("label"), 40) or "document"
+            citation_id = _truncate(citation.get("id"), 100) or "source"
             text = _truncate(citation.get("text"), 600)
             if text:
-                citation_lines.append(f"{label}: {text}")
+                citation_lines.append(f"{label} [{citation_id}]: {text}")
         if citation_lines:
             parts.append("Citations:\n" + "\n".join(citation_lines))
         chunks.append("\n".join(parts))
@@ -494,3 +500,42 @@ def build_tutor_context(notebook_or_id):
         if title or body:
             chunks.append(f"Note {index}: {title}\n{body}".strip())
     return "\n\n".join(chunks)[:_TUTOR_CONTEXT_LIMIT]
+
+
+def tutor_citations(notebook_or_id):
+    """Return bounded citation metadata for the Notebook tutor UI."""
+    notebook = (
+        _read_notebook_file(notebook_or_id)
+        if isinstance(notebook_or_id, str)
+        else notebook_or_id
+    )
+    if not isinstance(notebook, dict):
+        raise ValueError("invalid notebook")
+    citations = []
+    for source in notebook.get("sources") or ():
+        if not isinstance(source, dict):
+            continue
+        source_id = _truncate(source.get("id"), 80)
+        title = _truncate(source.get("title"), _SOURCE_TITLE_LIMIT) or "Untitled source"
+        url = _truncate(source.get("url"), _URL_LIMIT)
+        source_citations = source.get("citations") or [{
+            "id": f"{source_id}-doc",
+            "label": "document",
+        }]
+        for citation in source_citations[:_TUTOR_CONTEXT_CITATIONS_PER_SOURCE]:
+            if not isinstance(citation, dict):
+                continue
+            item = {
+                "source_id": source_id,
+                "citation_id": _truncate(citation.get("id"), 100),
+                "label": _truncate(citation.get("label"), 40) or "document",
+                "title": title,
+            }
+            if url:
+                item["url"] = url
+            if isinstance(citation.get("page"), int):
+                item["page"] = citation["page"]
+            citations.append(item)
+            if len(citations) >= 40:
+                return citations
+    return citations

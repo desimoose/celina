@@ -60,6 +60,7 @@ SYSTEM_PROMPT = (
 
 _DEFAULT_SESSION_RETENTION_SECONDS = 24 * 60 * 60
 _SESSION_RETENTION_CHOICES = {0, 3600, 86400, 604800}
+_CHAT_SYSTEM_LIMIT = 40000
 SessionJanitor = session_cleanup.SessionJanitor
 
 
@@ -711,6 +712,9 @@ class Handler(BaseHTTPRequestHandler):
             if parts[1] == "learning-path" and len(parts) == 2:
                 learning_path = self._generate_learning_path(notebook_id, payload)
                 return self._send(200, {"learning_path": learning_path})
+            if parts[1] == "tutor" and len(parts) == 2:
+                result = self._notebook_tutor(notebook_id, payload)
+                return self._send(200, result)
         except ValueError as e:
             return self._send(400, {"error": str(e)})
         except OSError as e:
@@ -796,6 +800,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload, "kind", limit=64, required=False
             ),
         }
+        tools.validate_public_http_url(request["url"])
         fetched = tools.fetch(request["url"])
         return notebooks.import_source(notebook_id, request, fetched)
 
@@ -810,6 +815,33 @@ class Handler(BaseHTTPRequestHandler):
             "depth": depth,
         }
         return notebooks.generate_learning_path(notebook_id, request)
+
+    def _notebook_tutor(self, notebook_id, payload):
+        provider = payload.get("provider") or "anthropic"
+        if not isinstance(provider, str) or not provider.strip():
+            raise ValueError("provider must be a string")
+        question = self._notebook_request_value(
+            payload, "question", limit=2000
+        )
+        notebook = notebooks.read_notebook(notebook_id)
+        context = notebooks.build_tutor_context(notebook)
+        system = (
+            SYSTEM_PROMPT
+            + "\n\nYou are the Celina Notebook tutor. Teach at the notebook's requested "
+            "level, distinguish evidence from inference, and cite claims using only "
+            "the exact citation IDs in the notebook context, such as [source-1-p2]. "
+            "Never invent a citation ID. If the sources do not support an answer, say so."
+            + "\n\nNotebook context:\n"
+            + context
+        )
+        result = gateway.chat(
+            provider,
+            [{"role": "user", "content": question}],
+            system=system[:_CHAT_SYSTEM_LIMIT],
+        )
+        result = dict(result)
+        result["citations"] = notebooks.tutor_citations(notebook)
+        return result
 
     def _start_search_run(self, payload):
         if not isinstance(payload, dict):

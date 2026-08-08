@@ -11,9 +11,11 @@ That is the whole point - the heavy tools are upgrades, not prerequisites.
 
 import html
 from dataclasses import dataclass
+import ipaddress
 import os
 import re
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -187,6 +189,46 @@ def _content_type(headers):
 
 def _media_type(content_type):
     return content_type.split(";", 1)[0].strip().lower()
+
+
+def validate_public_http_url(url):
+    """Reject import targets that resolve to local or non-public addresses.
+
+    This is intentionally an import guard: Celina can still read ordinary
+    research links, but a notebook import must not become a convenient SSRF
+    primitive for loopback, link-local, private, or metadata services.
+    """
+    if not isinstance(url, str) or not url.strip():
+        raise ValueError("url is required")
+    candidate = url.strip()
+    parsed = urllib.parse.urlsplit(candidate)
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise ValueError("only HTTP(S) URLs are allowed")
+    if parsed.username or parsed.password or not parsed.hostname:
+        raise ValueError("URL must not contain credentials and must include a host")
+    try:
+        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+    except ValueError:
+        raise ValueError("URL has an invalid port")
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname == "localhost" or hostname.endswith(".localhost") or hostname.endswith(".local"):
+        raise ValueError("local hostnames are not allowed")
+    try:
+        addresses = [ipaddress.ip_address(hostname)]
+    except ValueError:
+        try:
+            addresses = [
+                ipaddress.ip_address(info[4][0])
+                for info in socket.getaddrinfo(
+                    hostname, port, type=socket.SOCK_STREAM
+                )
+            ]
+        except socket.gaierror:
+            addresses = []
+    for address in addresses:
+        if not address.is_global:
+            raise ValueError("URL must resolve to a public address")
+    return candidate
 
 
 def _decode_page_body(body, content_type):

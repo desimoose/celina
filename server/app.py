@@ -45,6 +45,8 @@ import serialization  # noqa: E402
 import sessions  # noqa: E402
 import session_cleanup  # noqa: E402
 import sse  # noqa: E402
+import idempotency  # noqa: E402
+import storage  # noqa: E402
 import tokens  # noqa: E402
 import tools  # noqa: E402
 import update_check  # noqa: E402
@@ -61,7 +63,13 @@ SYSTEM_PROMPT = (
 _DEFAULT_SESSION_RETENTION_SECONDS = 24 * 60 * 60
 _SESSION_RETENTION_CHOICES = {0, 3600, 86400, 604800}
 _CHAT_SYSTEM_LIMIT = 40000
+MAX_REQUEST_BODY_BYTES = 256 * 1024
+MAX_WORKSPACE_CONTENT_BYTES = 1_000_000
 SessionJanitor = session_cleanup.SessionJanitor
+
+
+class RequestBodyTooLarge(ValueError):
+    pass
 
 
 _ENV_TEMPLATE = """\
@@ -101,10 +109,10 @@ CELINA_SESSION_RETENTION_SECONDS=86400
 
 def seed_env(path):
     """Write a starter .env if none exists. Never overwrites user edits."""
-    if not os.path.exists(path):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(_ENV_TEMPLATE)
+    with storage.locked(path):
+        if not os.path.exists(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            storage.atomic_write_text(path, _ENV_TEMPLATE)
 
 
 def load_env():
@@ -148,26 +156,26 @@ def update_env(updates):
     are preserved. New keys are appended."""
     path = paths.env_file()
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    existing = []
-    if os.path.isfile(path):
-        with open(path, "r", encoding="utf-8") as fh:
-            existing = fh.read().splitlines()
+    with storage.locked(path):
+        existing = []
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as fh:
+                existing = fh.read().splitlines()
 
-    remaining = dict(updates)
-    out = []
-    for line in existing:
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#") and "=" in stripped:
-            key = stripped.split("=", 1)[0].strip()
-            if key in remaining:
-                out.append(f"{key}={remaining.pop(key)}")
-                continue
-        out.append(line)
-    for key, value in remaining.items():
-        out.append(f"{key}={value}")
+        remaining = dict(updates)
+        out = []
+        for line in existing:
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and "=" in stripped:
+                key = stripped.split("=", 1)[0].strip()
+                if key in remaining:
+                    out.append(f"{key}={remaining.pop(key)}")
+                    continue
+            out.append(line)
+        for key, value in remaining.items():
+            out.append(f"{key}={value}")
 
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(out) + "\n")
+        storage.atomic_write_text(path, "\n".join(out) + "\n")
 
     for key, value in updates.items():
         os.environ[key] = value
@@ -203,21 +211,93 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps(body).encode("utf-8")
         elif isinstance(body, str):
             body = body.encode("utf-8")
+        if not isinstance(body, bytes):
+            body = bytes(body)
+        response_headers = {"Content-Type": ctype, **(headers or {})}
+        token = getattr(self, "_idempotency_token", None)
+        if token:
+            self.server.idempotency.complete(
+                token,
+                code,
+                body,
+                response_headers,
+            )
+            self._idempotency_token = None
+        return self._send_raw(code, body, headers=response_headers)
+
+    def _send_raw(self, code, body, ctype="application/json; charset=utf-8", headers=None):
+        response_headers = headers or {}
         self.send_response(code)
-        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Type", response_headers.get("Content-Type", ctype))
         if urllib.parse.urlparse(self.path).path.startswith("/api/"):
             self.send_header("Cache-Control", "no-store")
-        for name, value in (headers or {}).items():
+        for name, value in response_headers.items():
+            if name.lower() == "content-type":
+                continue
             self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
     def _read_json(self):
-        length = int(self.headers.get("Content-Length") or 0)
+        raw_length = self.headers.get("Content-Length")
+        try:
+            length = int(raw_length or 0)
+        except (TypeError, ValueError):
+            self._discard_request_body()
+            raise ValueError("invalid Content-Length")
+        if length < 0:
+            self._discard_request_body()
+            raise ValueError("invalid Content-Length")
+        if length > MAX_REQUEST_BODY_BYTES:
+            self._discard_request_body()
+            raise RequestBodyTooLarge("request body too large")
         if not length:
             return {}
         return json.loads(self.rfile.read(length).decode("utf-8"))
+
+    def _begin_idempotency(self, payload):
+        key = self.headers.get("Idempotency-Key")
+        if key is None:
+            return True
+        try:
+            canonical = json.dumps(
+                payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            )
+            outcome, token, cached = self.server.idempotency.begin(
+                key,
+                idempotency.fingerprint(
+                    self.command,
+                    urllib.parse.urlparse(self.path).path,
+                    canonical,
+                ),
+            )
+        except (TypeError, ValueError) as exc:
+            self._send(400, {"error": str(exc)})
+            return False
+        if outcome == "conflict":
+            self._send(409, {
+                "error": "Idempotency-Key was already used with a different request"
+            })
+            return False
+        if outcome == "in_progress":
+            self._send(409, {
+                "error": "Idempotency-Key is already in progress",
+                "retryable": True,
+            })
+            return False
+        if outcome == "replay":
+            self._send_raw(
+                cached["status"],
+                cached["body"],
+                headers=cached["headers"],
+            )
+            return False
+        self._idempotency_token = token
+        return True
 
     def _discard_request_body(self):
         try:
@@ -445,8 +525,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbidden()
             try:
                 payload = self._read_json()
+            except RequestBodyTooLarge as exc:
+                return self._send(413, {"error": str(exc)})
             except Exception:
                 return self._send(400, {"error": "invalid JSON body"})
+            if not self._begin_idempotency(payload):
+                return
             return self._post_notebook_route(parsed, payload)
         if route == "/api/settings":
             if not self._allows_session_mutation(parsed.query):
@@ -454,11 +538,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbidden()
             try:
                 payload = self._read_json()
+            except RequestBodyTooLarge as exc:
+                return self._send(413, {"error": str(exc)})
             except Exception:
                 return self._send(400, {"error": "invalid JSON body"})
+            if not self._begin_idempotency(payload):
+                return
             return self._save_settings(payload)
         try:
             payload = self._read_json()
+        except RequestBodyTooLarge as exc:
+            return self._send(413, {"error": str(exc)})
         except Exception:
             return self._send(400, {"error": "invalid JSON body"})
 
@@ -471,7 +561,7 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/notebooks" or route.startswith("/api/notebooks/"):
             return self._post_notebook_route(parsed, payload)
         if route == "/api/workspace/save":
-            return self._save(payload)
+            return self._save(payload, parsed.query)
         if route == "/api/projects":
             return self._create_project(payload, parsed.query)
         if route.startswith("/api/projects/"):
@@ -485,6 +575,9 @@ class Handler(BaseHTTPRequestHandler):
             if not self._allows_session_mutation(parsed.query):
                 self._discard_request_body()
                 return self._forbidden()
+            self._discard_request_body()
+            if not self._begin_idempotency({"action": "delete_all_notebooks"}):
+                return
             try:
                 deleted = notebooks.delete_all_notebooks()
             except OSError as exc:
@@ -499,6 +592,9 @@ class Handler(BaseHTTPRequestHandler):
         session_id = route[len(prefix):]
         if not session_id or "/" in session_id or self._session(session_id) is None:
             return self._not_found()
+        self._discard_request_body()
+        if not self._begin_idempotency({"session_id": session_id}):
+            return
         try:
             result = self.server.session_store.delete(session_id)
         except (OSError, ValueError):
@@ -568,10 +664,14 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/sessions":
             try:
                 payload = self._read_json()
+            except RequestBodyTooLarge as exc:
+                return self._send(413, {"error": str(exc)})
             except Exception:
                 return self._send(400, {"error": "invalid JSON body"})
             if not isinstance(payload, dict):
                 return self._send(400, {"error": "invalid session request"})
+            if not self._begin_idempotency(payload):
+                return
             content_recording = payload.get("content_recording", True)
             if not isinstance(content_recording, bool):
                 return self._send(400, {
@@ -592,6 +692,8 @@ class Handler(BaseHTTPRequestHandler):
         session_id = suffix[:-4]
         if not session_id or "/" in session_id or self._session(session_id) is None:
             return self._not_found()
+        if not self._begin_idempotency({"session_id": session_id}):
+            return
         try:
             session = self.server.session_store.mark_stopped(session_id)
         except (OSError, ValueError, KeyError):
@@ -668,8 +770,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbidden()
             try:
                 payload = self._read_json()
+            except RequestBodyTooLarge as exc:
+                return self._send(413, {"error": str(exc)})
             except Exception:
                 return self._send(400, {"error": "invalid JSON body"})
+            if not self._begin_idempotency(payload):
+                return
             return self._start_search_run(payload)
 
         prefix = "/api/search-runs/"
@@ -684,6 +790,8 @@ class Handler(BaseHTTPRequestHandler):
         self._discard_request_body()
         if not run_id or "/" in run_id:
             return self._not_found()
+        if not self._begin_idempotency({"run_id": run_id}):
+            return
         try:
             run = self.server.search_runtime.stop(run_id)
         except KeyError:
@@ -1016,11 +1124,37 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- handlers ------------------------------------------------------
     def _chat(self, payload):
+        try:
+            payload = self._require_object(payload, "invalid chat request")
+            messages = payload.get("messages")
+            if not isinstance(messages, list) or not messages or len(messages) > 20:
+                raise ValueError("messages is required and must be a list of 1-20 items")
+            clean_messages = []
+            total_message_chars = 0
+            for message in messages:
+                if not isinstance(message, dict):
+                    raise ValueError("messages must contain objects")
+                role = message.get("role")
+                content = message.get("content")
+                if role not in {"system", "user", "assistant"}:
+                    raise ValueError("message role is invalid")
+                if not isinstance(content, str) or not content.strip():
+                    raise ValueError("message content is required")
+                if len(content) > _CHAT_SYSTEM_LIMIT:
+                    raise ValueError("message content is too long")
+                total_message_chars += len(content)
+                if total_message_chars > 100000:
+                    raise ValueError("message content is too large")
+                clean_messages.append({"role": role, "content": content})
+        except ValueError as exc:
+            return self._send(400, {"error": str(exc)})
         provider = payload.get("provider") or "anthropic"
-        messages = payload.get("messages") or []
-        context = (payload.get("context") or "").strip()
-        if not messages:
-            return self._send(400, {"error": "messages is required"})
+        context_value = payload.get("context") or ""
+        if not isinstance(provider, str) or len(provider) > 64:
+            return self._send(400, {"error": "provider is invalid"})
+        if not isinstance(context_value, str):
+            return self._send(400, {"error": "context must be text"})
+        context = context_value.strip()
 
         system = SYSTEM_PROMPT
         if context:
@@ -1030,7 +1164,7 @@ class Handler(BaseHTTPRequestHandler):
                 + context[:40000]
             )
         try:
-            result = gateway.chat(provider, messages, system=system)
+            result = gateway.chat(provider, clean_messages, system=system)
             return self._send(200, result)
         except gateway.GatewayError as e:
             return self._send(502, {"error": str(e)})
@@ -1038,10 +1172,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(500, {"error": f"unexpected: {e}"})
 
     def _explore(self, payload):
-        query = (payload.get("query") or "").strip()
+        try:
+            payload = self._require_object(payload, "invalid explore request")
+        except ValueError as exc:
+            return self._send(400, {"error": str(exc)})
+        query_value = payload.get("query") or ""
         provider = payload.get("provider")  # optional - results work keyless
+        if not isinstance(query_value, str) or len(query_value) > 4000:
+            return self._send(400, {"error": "query is invalid"})
+        query = query_value.strip()
         if not query:
             return self._send(400, {"error": "query is required"})
+        if provider is not None and (not isinstance(provider, str) or len(provider) > 64):
+            return self._send(400, {"error": "provider is invalid"})
         try:
             resp = scanner.scan(query, gateway=gateway, provider=provider)
             return self._send(200, resp)
@@ -1049,24 +1192,49 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(502, {"error": f"search failed: {e}"})
 
     def _fetch(self, payload):
-        url = (payload.get("url") or "").strip()
+        try:
+            payload = self._require_object(payload, "invalid fetch request")
+        except ValueError as exc:
+            return self._send(400, {"error": str(exc)})
+        url_value = payload.get("url") or ""
+        if not isinstance(url_value, str) or len(url_value) > notebooks._URL_LIMIT:
+            return self._send(400, {"error": "url is invalid"})
+        url = url_value.strip()
         if not url:
             return self._send(400, {"error": "url is required"})
         try:
+            tools.validate_public_http_url(url)
             return self._send(200, tools.fetch(url))
+        except ValueError as e:
+            return self._send(400, {"error": str(e)})
         except Exception as e:
             return self._send(502, {"error": str(e)})
 
-    def _save(self, payload):
-        rel = (payload.get("path") or "").strip()
+    def _save(self, payload, query_string=""):
+        if not self._allows_session_mutation(query_string):
+            return self._forbidden()
+        try:
+            payload = self._require_object(payload, "invalid workspace save request")
+        except ValueError as exc:
+            return self._send(400, {"error": str(exc)})
+        if not self._begin_idempotency(payload):
+            return
+        rel_value = payload.get("path") or ""
         content = payload.get("content") or ""
+        if not isinstance(rel_value, str) or len(rel_value) > 512:
+            return self._send(400, {"error": "path is invalid"})
+        rel = rel_value.strip()
         if not rel:
             return self._send(400, {"error": "path is required"})
+        if not isinstance(content, str):
+            return self._send(400, {"error": "content must be text"})
+        if len(content.encode("utf-8")) > MAX_WORKSPACE_CONTENT_BYTES:
+            return self._send(413, {"error": "content is too large"})
         try:
             target = safe_workspace_path(rel)
             os.makedirs(os.path.dirname(target), exist_ok=True)
-            with open(target, "w", encoding="utf-8") as fh:
-                fh.write(content)
+            with storage.locked(target):
+                storage.atomic_write_text(target, content)
             return self._send(200, {"saved": rel})
         except Exception as e:
             return self._send(400, {"error": str(e)})
@@ -1075,6 +1243,9 @@ class Handler(BaseHTTPRequestHandler):
         if not self._allows_session_mutation(query_string):
             return self._forbidden()
         try:
+            payload = self._require_object(payload, "invalid project request")
+            if not self._begin_idempotency(payload):
+                return
             result = projects.create_project(payload.get("name"))
             return self._send(201, result)
         except ValueError as e:
@@ -1089,6 +1260,9 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) != 5 or parts[4] != "outputs":
             return self._not_found()
         try:
+            payload = self._require_object(payload, "invalid project output request")
+            if not self._begin_idempotency(payload):
+                return
             result = projects.save_output(
                 parts[3],
                 payload.get("title"),
@@ -1110,12 +1284,19 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def _save_settings(self, payload):
+        try:
+            payload = self._require_object(payload, "invalid settings request")
+        except ValueError as exc:
+            return self._send(400, {"error": str(exc)})
         key_envs = {s["key_env"] for s in gateway.PROVIDERS.values() if s["key_env"]}
         model_envs = {s["model_env"] for s in gateway.PROVIDERS.values()}
 
         updates = {}
         retention_changed = False
         try:
+            for field in ("keys", "models"):
+                if field in payload and payload[field] is not None and not isinstance(payload[field], dict):
+                    raise ValueError(f"{field} must be an object")
             for env, val in (payload.get("keys") or {}).items():
                 if env in key_envs:
                     if not isinstance(val, str):
@@ -1248,6 +1429,7 @@ def make_server(port=None, host="127.0.0.1", session_root=None):
     server.session_janitor.run_once(include_active_incognito=True)
     server.session_janitor.start()
     server.session_store = store
+    server.idempotency = idempotency.IdempotencyStore()
     server.event_bus = events.EventBus(store)
     server.search_runtime = search_runtime.SearchRuntime(
         server.event_bus, store

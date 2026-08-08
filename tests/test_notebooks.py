@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -76,6 +77,34 @@ class NotebooksTest(unittest.TestCase):
         self.assertTrue(SAFE_ID.fullmatch(second["id"]))
         notes = self.notebooks.read_notebook(notebook["id"])["notes"]
         self.assertEqual([note["title"] for note in notes], ["Second note", "First note"])
+
+    def test_concurrent_note_writes_preserve_every_note(self):
+        notebook = self.notebooks.create_notebook("Concurrent notes")
+        barrier = threading.Barrier(8)
+        errors = []
+
+        def write_note(index):
+            try:
+                barrier.wait(timeout=5)
+                self.notebooks.add_note(
+                    notebook["id"],
+                    {"title": f"Note {index}", "body": f"Body {index}"},
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=write_note, args=(index,))
+            for index in range(8)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+
+        self.assertEqual(errors, [])
+        saved = self.notebooks.read_notebook(notebook["id"])
+        self.assertEqual(len(saved["notes"]), 8)
 
     def test_generate_learning_path_uses_goal_and_source_titles(self):
         notebook = self.notebooks.create_notebook("Sleep", goal="Learn better sleep")

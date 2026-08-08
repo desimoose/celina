@@ -7,6 +7,7 @@ import re
 import uuid
 
 import paths
+import storage
 
 
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}\Z")
@@ -99,17 +100,17 @@ def create_project(name):
         raise ValueError("project name is required")
     if len(clean_name) > 120:
         raise ValueError("project name is too long")
-    base = _slugify(clean_name)
-    project_id = base
-    while os.path.exists(_project_dir(project_id)):
-        project_id = f"{base}-{uuid.uuid4().hex[:6]}"
-    directory = _project_dir(project_id)
-    os.makedirs(os.path.join(directory, "outputs"), exist_ok=False)
-    meta = {"id": project_id, "name": clean_name, "created_at": _now()}
-    with open(os.path.join(directory, "project.json"), "w", encoding="utf-8") as fh:
-        json.dump(meta, fh, indent=2)
-        fh.write("\n")
-    return {**meta, "outputs": []}
+    root = os.path.realpath(paths.projects_dir())
+    with storage.locked(root):
+        base = _slugify(clean_name)
+        project_id = base
+        while os.path.exists(_project_dir(project_id)):
+            project_id = f"{base}-{uuid.uuid4().hex[:6]}"
+        directory = _project_dir(project_id)
+        os.makedirs(os.path.join(directory, "outputs"), exist_ok=False)
+        meta = {"id": project_id, "name": clean_name, "created_at": _now()}
+        storage.atomic_write_json(os.path.join(directory, "project.json"), meta)
+        return {**meta, "outputs": []}
 
 
 def save_output(project_id, title, format_id, content):
@@ -117,25 +118,27 @@ def save_output(project_id, title, format_id, content):
         raise ValueError("unsupported output format")
     if not isinstance(content, str):
         raise ValueError("output content must be text")
+    if len(content.encode("utf-8")) > 1_000_000:
+        raise ValueError("output content is too large")
     directory = _project_dir(project_id)
     meta = _read_meta(directory)
     if not meta:
         raise ValueError("unknown project")
     outputs_dir = os.path.join(directory, "outputs")
-    os.makedirs(outputs_dir, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M-%S")
-    filename = f"{stamp}-{_slugify(title)}.{_FORMATS[format_id]['extension']}"
-    target = os.path.realpath(os.path.join(outputs_dir, filename))
-    if not target.startswith(os.path.realpath(outputs_dir) + os.sep):
-        raise ValueError("output path escapes project")
-    suffix = 2
-    while os.path.exists(target):
-        filename = f"{stamp}-{_slugify(title)}-{suffix}.{_FORMATS[format_id]['extension']}"
-        target = os.path.join(outputs_dir, filename)
-        suffix += 1
-    with open(target, "w", encoding="utf-8") as fh:
-        fh.write(content)
-    return {"project_id": project_id, "name": filename, "format": format_id, "size": len(content.encode("utf-8"))}
+    with storage.locked(outputs_dir):
+        os.makedirs(outputs_dir, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M-%S")
+        filename = f"{stamp}-{_slugify(title)}.{_FORMATS[format_id]['extension']}"
+        target = os.path.realpath(os.path.join(outputs_dir, filename))
+        if not target.startswith(os.path.realpath(outputs_dir) + os.sep):
+            raise ValueError("output path escapes project")
+        suffix = 2
+        while os.path.exists(target):
+            filename = f"{stamp}-{_slugify(title)}-{suffix}.{_FORMATS[format_id]['extension']}"
+            target = os.path.join(outputs_dir, filename)
+            suffix += 1
+        storage.atomic_write_text(target, content)
+        return {"project_id": project_id, "name": filename, "format": format_id, "size": len(content.encode("utf-8"))}
 
 
 def read_output(project_id, filename):

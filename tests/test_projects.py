@@ -1,5 +1,6 @@
 import os
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -44,6 +45,36 @@ class ProjectsTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.join(self.root, first["id"], "outputs")))
         with self.assertRaises(ValueError):
             projects.save_output(first["id"], "bad", "pdf", "no")
+
+    def test_concurrent_output_writes_get_distinct_atomic_files(self):
+        project = projects.create_project("Concurrent outputs")
+        barrier = threading.Barrier(8)
+        errors = []
+
+        def write_output(index):
+            try:
+                barrier.wait(timeout=5)
+                projects.save_output(
+                    project["id"],
+                    "same title",
+                    "markdown",
+                    f"# Output {index}\n",
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=write_output, args=(index,))
+            for index in range(8)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+
+        self.assertEqual(errors, [])
+        listed = projects.list_projects()
+        self.assertEqual(len(listed[0]["outputs"]), 8)
 
 
 if __name__ == "__main__":

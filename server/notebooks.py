@@ -1,13 +1,14 @@
 """File-backed research notebooks stored under the local data directory."""
 
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 import json
 import os
 import re
-import tempfile
 import urllib.parse
 
 import paths
+import storage
 
 
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
@@ -88,21 +89,16 @@ def _read_notebook_file(notebook_id):
 
 def _write_notebook(data):
     path = _notebook_path(data["id"])
-    directory = os.path.dirname(path)
-    fd, tmp_path = tempfile.mkstemp(prefix=".notebook-", suffix=".json", dir=directory)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2)
-            fh.write("\n")
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp_path, path)
-    finally:
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except OSError:
-            pass
+    storage.atomic_write_json(path, data)
+
+
+def _notebook_mutation(function):
+    """Serialize each notebook read-modify-write operation in this process."""
+    @wraps(function)
+    def wrapped(notebook_id, *args, **kwargs):
+        with storage.locked(_notebook_path(notebook_id)):
+            return function(notebook_id, *args, **kwargs)
+    return wrapped
 
 
 def _clean_text(value, field, limit, required=True):
@@ -265,16 +261,17 @@ def export_notebooks():
 def delete_all_notebooks():
     """Delete notebook JSON files and return the number removed."""
     root = _workspace_root()
-    deleted = 0
-    for filename in os.listdir(root):
-        if not filename.endswith(".json") or not _SAFE_ID.fullmatch(filename[:-5]):
-            continue
-        path = os.path.join(root, filename)
-        if not os.path.isfile(path):
-            continue
-        os.remove(path)
-        deleted += 1
-    return deleted
+    with storage.locked(root):
+        deleted = 0
+        for filename in os.listdir(root):
+            if not filename.endswith(".json") or not _SAFE_ID.fullmatch(filename[:-5]):
+                continue
+            path = os.path.join(root, filename)
+            if not os.path.isfile(path):
+                continue
+            os.remove(path)
+            deleted += 1
+        return deleted
 
 
 def create_notebook(title, goal=""):
@@ -282,28 +279,30 @@ def create_notebook(title, goal=""):
     clean_goal = _clean_optional_text(goal, "goal", _NOTE_BODY_LIMIT)
     notebook_id = _slugify(clean_title)
     path = _notebook_path(notebook_id)
-    if os.path.isfile(path):
-        return _read_notebook_file(notebook_id)
-    now = _now()
-    notebook = {
-        "id": notebook_id,
-        "title": clean_title,
-        "goal": clean_goal,
-        "created_at": now,
-        "updated_at": now,
-        "sources": [],
-        "notes": [],
-        "study_sets": [],
-        "learning_path": _default_learning_path(clean_goal, [], "college"),
-    }
-    _write_notebook(notebook)
-    return notebook
+    with storage.locked(path):
+        if os.path.isfile(path):
+            return _read_notebook_file(notebook_id)
+        now = _now()
+        notebook = {
+            "id": notebook_id,
+            "title": clean_title,
+            "goal": clean_goal,
+            "created_at": now,
+            "updated_at": now,
+            "sources": [],
+            "notes": [],
+            "study_sets": [],
+            "learning_path": _default_learning_path(clean_goal, [], "college"),
+        }
+        _write_notebook(notebook)
+        return notebook
 
 
 def read_notebook(notebook_id):
     return _read_notebook_file(notebook_id)
 
 
+@_notebook_mutation
 def add_source(notebook_id, payload):
     notebook = _read_notebook_file(notebook_id)
     if not isinstance(payload, dict):
@@ -400,6 +399,7 @@ def _import_excerpt(citations, fallback_text):
     return _truncate("\n\n".join(part for part in parts if part), _EXCERPT_LIMIT)
 
 
+@_notebook_mutation
 def import_source(notebook_id, payload, fetched):
     notebook = _read_notebook_file(notebook_id)
     if not isinstance(payload, dict):
@@ -446,6 +446,7 @@ def import_source(notebook_id, payload, fetched):
     return source
 
 
+@_notebook_mutation
 def add_note(notebook_id, payload):
     notebook = _read_notebook_file(notebook_id)
     if not isinstance(payload, dict):
@@ -466,6 +467,7 @@ def add_note(notebook_id, payload):
     return note
 
 
+@_notebook_mutation
 def generate_learning_path(notebook_id, payload):
     notebook = _read_notebook_file(notebook_id)
     if not isinstance(payload, dict):
@@ -646,6 +648,7 @@ def _study_item_is_due(item, now=None):
     return due_at <= current
 
 
+@_notebook_mutation
 def save_study_set(notebook_id, normalized):
     notebook = _read_notebook_file(notebook_id)
     if not isinstance(normalized, dict) or normalized.get("mode") not in {"flashcards", "quiz"}:
@@ -704,6 +707,7 @@ def review_due_count(notebook_or_id, now=None):
     )
 
 
+@_notebook_mutation
 def review_study_item(notebook_id, payload):
     notebook = _read_notebook_file(notebook_id)
     if not isinstance(payload, dict):

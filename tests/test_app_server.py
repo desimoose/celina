@@ -441,6 +441,84 @@ class NotebookApiTest(unittest.TestCase):
         notebook = json.loads(body)["notebook"]
         self.assertEqual(notebook["sources"][0]["origin"], "search")
 
+    def test_notebook_source_idempotency_replays_and_rejects_payload_reuse(self):
+        created, cookie, csrf = self._create_notebook()
+        headers = self._mutation_headers(cookie, csrf)
+        headers["Idempotency-Key"] = "source-retry-1"
+        payload = {
+            "title": "Retry-safe source",
+            "url": "https://example.test/retry",
+            "kind": "research",
+            "excerpt": "A source that should only be captured once.",
+        }
+
+        first_status, _headers, first_body = self._request(
+            "POST",
+            f"/api/notebooks/{created['notebook']['id']}/sources",
+            payload,
+            headers,
+        )
+        second_status, _headers, second_body = self._request(
+            "POST",
+            f"/api/notebooks/{created['notebook']['id']}/sources",
+            payload,
+            headers,
+        )
+
+        self.assertEqual(first_status, 201)
+        self.assertEqual(second_status, 201)
+        self.assertEqual(json.loads(first_body), json.loads(second_body))
+        read_status, _headers, read_body = self._request(
+            "GET",
+            f"/api/notebooks/{created['notebook']['id']}",
+            headers={"Cookie": cookie},
+        )
+        self.assertEqual(read_status, 200)
+        self.assertEqual(len(json.loads(read_body)["notebook"]["sources"]), 1)
+
+        conflict = dict(payload)
+        conflict["title"] = "Different retry payload"
+        conflict_status, _headers, conflict_body = self._request(
+            "POST",
+            f"/api/notebooks/{created['notebook']['id']}/sources",
+            conflict,
+            headers,
+        )
+        self.assertEqual(conflict_status, 409)
+        self.assertIn("Idempotency-Key", conflict_body)
+
+    def test_request_body_limit_and_legacy_payload_validation(self):
+        cookie, csrf = self._launch()
+        headers = self._mutation_headers(cookie, csrf)
+        oversized = b"{" + (b"x" * (app.MAX_REQUEST_BODY_BYTES + 1)) + b"}"
+        status, _headers, body = self._request(
+            "POST",
+            "/api/notebooks",
+            headers=headers,
+            raw_body=oversized,
+        )
+        self.assertEqual(status, 413)
+        self.assertEqual(json.loads(body)["error"], "request body too large")
+
+        status, _headers, body = self._request(
+            "POST",
+            "/api/chat",
+            raw_body=b"[]",
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body)["error"], "invalid chat request")
+
+    def test_legacy_fetch_rejects_private_urls_server_side(self):
+        status, _headers, body = self._request(
+            "POST",
+            "/api/fetch",
+            {"url": "http://127.0.0.1:8765/private"},
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("public address", json.loads(body)["error"])
+
     def test_notebook_source_route_rejects_unsafe_search_capture_urls(self):
         created, cookie, csrf = self._create_notebook()
 

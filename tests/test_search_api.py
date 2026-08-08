@@ -289,6 +289,17 @@ class SearchApiTest(unittest.TestCase):
         with open(index_path, "rb") as handle:
             self.assertEqual(handle.read(), source_before)
 
+    def test_favicon_is_declared_and_served_as_svg(self):
+        status, headers, body = self._request("GET", "/")
+        self.assertEqual(status, 200)
+        self.assertIn('rel="icon"', body)
+        self.assertIn('href="/celina.svg"', body)
+
+        status, headers, body = self._request("GET", "/celina.svg")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("Content-Type"), "image/svg+xml")
+        self.assertIn("<svg", body)
+
     def test_protected_session_reads_reject_missing_or_wrong_launch_cookie(self):
         denied, _headers, body = self._request("GET", "/api/sessions")
         self.assertEqual(denied, 403)

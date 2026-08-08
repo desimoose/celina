@@ -31,6 +31,7 @@ _STUDY_INTERVAL_CAP_DAYS = 30.0
 _HOME_DUE_LIMIT = 20
 _HOME_NEXT_STEP_LIMIT = 12
 _PATH_DEPTHS = {"survey", "college", "graduate"}
+CURRENT_NOTEBOOK_SCHEMA = 2
 
 
 def _now():
@@ -61,35 +62,69 @@ def _notebook_path(notebook_id):
 
 
 def _read_json(path):
-    with open(path, "r", encoding="utf-8") as fh:
-        data = json.load(fh)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise ValueError("invalid notebook") from None
     if not isinstance(data, dict):
         raise ValueError("invalid notebook")
     return data
 
 
+def _migrate_notebook(data):
+    if not isinstance(data, dict):
+        raise ValueError("invalid notebook")
+    version = data.get("schema_version", 1)
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise ValueError("invalid notebook")
+    if version > CURRENT_NOTEBOOK_SCHEMA:
+        raise ValueError("unsupported notebook schema version")
+
+    migrated = dict(data)
+    if version == 1:
+        migrated.setdefault("study_sets", [])
+        migrated["schema_version"] = 2
+    return migrated
+
+
 def _read_notebook_file(notebook_id):
     path = _notebook_path(notebook_id)
-    if not os.path.isfile(path):
-        raise ValueError("unknown notebook")
-    data = _read_json(path)
-    if data.get("id") != notebook_id:
-        raise ValueError("invalid notebook")
-    for key in ("title", "goal", "created_at", "updated_at", "sources", "notes", "learning_path"):
-        if key not in data:
+    with storage.locked(path):
+        if not os.path.isfile(path):
+            raise ValueError("unknown notebook")
+        original = _read_json(path)
+        data = _migrate_notebook(original)
+        if data.get("id") != notebook_id:
             raise ValueError("invalid notebook")
-    if not isinstance(data["sources"], list) or not isinstance(data["notes"], list):
-        raise ValueError("invalid notebook")
-    if "study_sets" not in data:
-        data["study_sets"] = []
-    if not isinstance(data["study_sets"], list):
-        raise ValueError("invalid notebook")
-    return data
+        for key in (
+            "title",
+            "goal",
+            "created_at",
+            "updated_at",
+            "sources",
+            "notes",
+            "study_sets",
+            "learning_path",
+        ):
+            if key not in data:
+                raise ValueError("invalid notebook")
+        if (
+            not isinstance(data["sources"], list)
+            or not isinstance(data["notes"], list)
+            or not isinstance(data["study_sets"], list)
+        ):
+            raise ValueError("invalid notebook")
+        if data != original:
+            storage.atomic_write_json(path, data)
+        return data
 
 
 def _write_notebook(data):
-    path = _notebook_path(data["id"])
-    storage.atomic_write_json(path, data)
+    migrated = _migrate_notebook(data)
+    data.clear()
+    data.update(migrated)
+    storage.atomic_write_json(_notebook_path(data["id"]), data)
 
 
 def _notebook_mutation(function):

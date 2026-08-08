@@ -790,6 +790,51 @@ class NotebookApiTest(unittest.TestCase):
         with open(notebook_file, "r", encoding="utf-8") as fh:
             self.assertEqual(fh.read(), before)
 
+        malformed_fixture = os.path.join(
+            os.path.dirname(__file__), "fixtures", "notebooks", "malformed.json"
+        )
+        with open(malformed_fixture, "rb") as fh:
+            malformed = fh.read()
+        with open(notebook_file, "wb") as fh:
+            fh.write(malformed)
+
+        status, _headers, body = self._request(
+            "GET",
+            f"/api/notebooks/{created['notebook']['id']}",
+            headers={"Cookie": cookie},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body), {"error": "invalid notebook"})
+
+        status, _headers, body = self._request(
+            "POST",
+            f"/api/notebooks/{created['notebook']['id']}/notes",
+            {"title": "Must not write", "body": "Preserve corruption", "source_ids": []},
+            self._mutation_headers(cookie, csrf),
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body), {"error": "invalid notebook"})
+        with open(notebook_file, "rb") as fh:
+            self.assertEqual(fh.read(), malformed)
+
+        future = dict(created["notebook"], schema_version=999)
+        future_bytes = (json.dumps(future, indent=2) + "\n").encode("utf-8")
+        with open(notebook_file, "wb") as fh:
+            fh.write(future_bytes)
+
+        status, _headers, body = self._request(
+            "POST",
+            f"/api/notebooks/{created['notebook']['id']}/notes",
+            {"title": "Must not write", "body": "Preserve future data", "source_ids": []},
+            self._mutation_headers(cookie, csrf),
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(
+            json.loads(body), {"error": "unsupported notebook schema version"}
+        )
+        with open(notebook_file, "rb") as fh:
+            self.assertEqual(fh.read(), future_bytes)
+
     @mock.patch.object(app.tools, "fetch_public")
     def test_notebook_source_import_route_imports_html_with_document_citation(
         self,

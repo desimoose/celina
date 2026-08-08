@@ -6,6 +6,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -16,6 +17,7 @@ if SERVER not in sys.path:
 
 
 SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
+FIXTURES = Path(__file__).parent / "fixtures" / "notebooks"
 
 
 class NotebooksTest(unittest.TestCase):
@@ -31,6 +33,75 @@ class NotebooksTest(unittest.TestCase):
     def tearDown(self):
         self.patch.stop()
         self.temp.cleanup()
+
+    def _install_fixture(self, name, notebook_id=None):
+        root = Path(self.data_root) / "workspace" / "notebooks"
+        root.mkdir(parents=True, exist_ok=True)
+        target = root / f"{notebook_id or Path(name).stem}.json"
+        target.write_bytes((FIXTURES / name).read_bytes())
+        return target
+
+    def test_v1_notebook_migrates_atomically_under_lock_without_data_loss(self):
+        target = self._install_fixture("v1-basic.json")
+        original = json.loads(target.read_text(encoding="utf-8"))
+        lock_depth = 0
+        real_atomic_write = self.notebooks.storage.atomic_write_json
+
+        @contextmanager
+        def tracked_lock(path):
+            nonlocal lock_depth
+            lock_depth += 1
+            try:
+                yield
+            finally:
+                lock_depth -= 1
+
+        def checked_atomic_write(path, value):
+            self.assertGreater(lock_depth, 0)
+            return real_atomic_write(path, value)
+
+        with mock.patch.object(
+            self.notebooks.storage, "locked", side_effect=tracked_lock
+        ), mock.patch.object(
+            self.notebooks.storage,
+            "atomic_write_json",
+            side_effect=checked_atomic_write,
+        ) as atomic_write:
+            migrated = self.notebooks.read_notebook("v1-basic")
+            reread = self.notebooks.read_notebook("v1-basic")
+
+        self.assertEqual(getattr(self.notebooks, "CURRENT_NOTEBOOK_SCHEMA", None), 2)
+        self.assertEqual(migrated["schema_version"], 2)
+        self.assertEqual(migrated["study_sets"], [])
+        self.assertEqual(migrated["sources"], original["sources"])
+        self.assertEqual(migrated["notes"], original["notes"])
+        self.assertEqual(reread, migrated)
+        self.assertEqual(atomic_write.call_count, 1)
+        self.assertEqual(json.loads(target.read_text(encoding="utf-8")), migrated)
+
+    def test_malformed_notebook_returns_controlled_error_without_replacement(self):
+        target = self._install_fixture("malformed.json")
+        before = target.read_bytes()
+
+        with self.assertRaisesRegex(ValueError, r"^invalid notebook$"):
+            self.notebooks.read_notebook("malformed")
+
+        self.assertEqual(target.read_bytes(), before)
+
+    def test_future_schema_cannot_be_mutated(self):
+        notebook = self.notebooks.create_notebook("Future schema")
+        target = Path(self.data_root) / "workspace" / "notebooks" / "future-schema.json"
+        future = dict(notebook, schema_version=999)
+        target.write_text(json.dumps(future, indent=2) + "\n", encoding="utf-8")
+        before = target.read_bytes()
+
+        with self.assertRaisesRegex(ValueError, r"unsupported notebook schema version"):
+            self.notebooks.add_note(
+                notebook["id"],
+                {"title": "Must not write", "body": "Preserve future data"},
+            )
+
+        self.assertEqual(target.read_bytes(), before)
 
     def test_create_notebook_rejects_empty_and_oversized_titles(self):
         with self.assertRaises(ValueError):
@@ -526,6 +597,7 @@ class NotebooksTest(unittest.TestCase):
         with open(target, "r", encoding="utf-8") as fh:
             data = json.load(fh)
         self.assertEqual(data["id"], notebook["id"])
+        self.assertEqual(data.get("schema_version"), 2)
         self.assertIn("learning_path", data)
 
 

@@ -374,6 +374,12 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("invalid notebook id")
         return notebook_id
 
+    def _send_notebook_error(self, error):
+        message = "invalid notebook" if isinstance(
+            error, json.JSONDecodeError
+        ) else str(error)
+        return self._send(400, {"error": message or "invalid notebook"})
+
     @staticmethod
     def _traffic_record(record, include_bodies=False):
         value = {
@@ -757,7 +763,7 @@ class Handler(BaseHTTPRequestHandler):
             notebook_id = self._safe_notebook_id(notebook_id)
             notebook = notebooks.read_notebook(notebook_id)
         except ValueError as e:
-            return self._send(400, {"error": str(e)})
+            return self._send_notebook_error(e)
         except OSError:
             return self._not_found()
         return self._send(200, {"notebook": notebook})
@@ -816,7 +822,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 notebook = notebooks.create_notebook(title, goal)
             except ValueError as e:
-                return self._send(400, {"error": str(e)})
+                return self._send_notebook_error(e)
             except OSError as e:
                 return self._send(500, {"error": str(e)})
             except Exception:
@@ -855,7 +861,7 @@ class Handler(BaseHTTPRequestHandler):
                 result = self._notebook_review_study_item(notebook_id, payload)
                 return self._send(200, result)
         except ValueError as e:
-            return self._send(400, {"error": str(e)})
+            return self._send_notebook_error(e)
         except OSError as e:
             return self._send(500, {"error": str(e)})
         except Exception:

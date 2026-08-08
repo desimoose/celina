@@ -60,6 +60,33 @@ idempotency key where supported. `DURABLE_IDEMPOTENCY` requires a completed
 response to replay and a conflicting payload to be rejected; never guess
 whether a non-idempotent mutation completed.
 
+### Notebook quarantine and recovery
+
+Celina rejects malformed notebook JSON and notebook schema versions newer than
+the running application. It does not replace those files or guess at missing
+sources, notes, study material, or other user-authored content.
+
+To recover an affected notebook:
+
+1. Stop Celina so no notebook mutation can race with recovery.
+2. Copy the affected `workspace/notebooks/<notebook-id>.json` file to a
+   user-controlled quarantine directory. Preserve this copy unchanged for
+   diagnosis; do not use the quarantine directory as Celina's workspace.
+3. Restore the last known-good notebook export or backup to the original
+   notebook path. Do not synthesize missing fields or source content from a
+   partial file.
+4. Start Celina and verify that the restored notebook opens and that its
+   sources, notes, learning path, and study sets match the known-good copy.
+5. Reverify notebook migration and error handling from the repository root:
+
+   ```text
+   python -m unittest tests.test_notebooks tests.test_app_server.NotebookApiTest.test_notebook_invalid_ids_and_malformed_bodies_return_400_without_writes -v
+   ```
+
+Keep the quarantined file until the restored notebook and the verification
+command both succeed. If no known-good backup or export exists, retain the
+damaged file and stop: automatic repair never guesses missing content.
+
 ## Privacy and provider disclosure
 
 `EPHEMERAL_INCOGNITO` removes Celina-local session traffic when the session

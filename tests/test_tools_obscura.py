@@ -273,5 +273,24 @@ class FetchAppliesTheTextCapTest(unittest.TestCase):
         self.assertTrue(page["text"].endswith("[truncated for length]"))
 
 
+class FetchPdfFallbackTest(unittest.TestCase):
+    @mock.patch("tools._plain_page", return_value={
+        "url": "https://example.test/document.pdf",
+        "engine": "plain-pdf",
+        "content_type": "application/pdf",
+        "text": "Readable PDF evidence.",
+    })
+    @mock.patch("tools.obscura_dump", return_value="%PDF-1.7\nraw bytes")
+    @mock.patch("tools._fetch_obscura_pdf_payload", side_effect=RuntimeError("unreadable"))
+    @mock.patch("tools.find_obscura", return_value=r"C:\\vendor\\obscura.exe")
+    def test_obscura_does_not_return_raw_pdf_bytes_as_page_text(
+        self, _find, _pdf_fetch, _dump, plain_page
+    ):
+        page = tools.fetch("https://example.test/document.pdf")
+
+        self.assertEqual(page["engine"], "plain-pdf")
+        plain_page.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

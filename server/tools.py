@@ -599,17 +599,23 @@ def fetch(url, traffic_context=None):
 
         try:
             # Obscura's --dump text is already readable; no regex strip needed.
+            dumped = _cap_fetched_text(obscura_dump(
+                url,
+                dump="text",
+                stealth=True,
+                traffic_context=traffic_context,
+                action_type="page.fetch",
+            ))
+            # Some browser/pdf combinations hand --dump the binary document
+            # decoded as text. Never persist that as evidence; retry through
+            # the bounded byte/PDF path instead.
+            if dumped.lstrip().startswith("%PDF-"):
+                return _plain_page(url, traffic_context, "(obscura returned PDF bytes)")
             return {
                 "url": url,
                 "engine": "obscura",
                 "note": "stealth",
-                "text": _cap_fetched_text(obscura_dump(
-                    url,
-                    dump="text",
-                    stealth=True,
-                    traffic_context=traffic_context,
-                    action_type="page.fetch",
-                )),
+                "text": dumped,
                 "content_type": "text/plain",
             }
         except traffic.TrafficCancelled:

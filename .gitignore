@@ -36,6 +36,7 @@ desktop.ini
 
 # local design-review artifacts
 .superpowers/
+.playwright-cli/
 
 # runtime debug output
 server-debug.log

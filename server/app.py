@@ -1433,7 +1433,7 @@ def make_server(port=None, host="127.0.0.1", session_root=None):
     server.session_janitor.run_once(include_active_incognito=True)
     server.session_janitor.start()
     server.session_store = store
-    server.idempotency = idempotency.IdempotencyStore()
+    server.idempotency = idempotency.IdempotencyStore(paths.idempotency_db())
     server.event_bus = events.EventBus(store)
     server.search_runtime = search_runtime.SearchRuntime(
         server.event_bus, store

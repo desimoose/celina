@@ -82,6 +82,10 @@ def memory_dir():
     return d
 
 
+def idempotency_db():
+    return os.path.join(data_dir(), "idempotency.sqlite3")
+
+
 _SAFE_COMPONENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 
 

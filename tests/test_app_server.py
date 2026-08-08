@@ -578,6 +578,21 @@ class NotebookApiTest(unittest.TestCase):
             payload,
             headers,
         )
+
+        self.srv.shutdown()
+        self.srv.server_close()
+        self.thread.join()
+        self.srv = app.make_server(
+            port=0,
+            session_root=os.path.join(self.celina_home, "sessions"),
+        )
+        self.base_url = f"http://127.0.0.1:{self.srv.server_address[1]}"
+        self.thread = threading.Thread(target=self.srv.serve_forever, daemon=True)
+        self.thread.start()
+        cookie, csrf = self._launch()
+        headers = self._mutation_headers(cookie, csrf)
+        headers["Idempotency-Key"] = "source-retry-1"
+
         second_status, _headers, second_body = self._request(
             "POST",
             f"/api/notebooks/{created['notebook']['id']}/sources",
@@ -587,7 +602,7 @@ class NotebookApiTest(unittest.TestCase):
 
         self.assertEqual(first_status, 201)
         self.assertEqual(second_status, 201)
-        self.assertEqual(json.loads(first_body), json.loads(second_body))
+        self.assertEqual(first_body, second_body)
         read_status, _headers, read_body = self._request(
             "GET",
             f"/api/notebooks/{created['notebook']['id']}",

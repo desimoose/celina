@@ -138,6 +138,9 @@ class SettingsUiSourceTest(unittest.TestCase):
         self.assertIn('fetch("/api/notebooks"', js)
         self.assertIn('history: state.history.slice(0, -1)', js)
         self.assertIn('/study-set', js)
+        self.assertIn('/study-set/review', js)
+        self.assertIn('Again', html)
+        self.assertIn('Got it', html)
         self.assertIn('study-mode', html)
         self.assertIn('session-badge', html)
 

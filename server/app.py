@@ -636,6 +636,8 @@ class Handler(BaseHTTPRequestHandler):
                     "updated_at": notebook["updated_at"],
                     "source_count": len(notebook["sources"]),
                     "note_count": len(notebook["notes"]),
+                    "study_set_count": len(notebook.get("study_sets", [])),
+                    "review_due_count": notebooks.review_due_count(notebook),
                     "learning_path_depth": notebook.get("learning_path", {}).get("depth", "college"),
                 })
             return self._send(200, {"notebooks": summaries})
@@ -735,6 +737,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, result)
             if parts[1] == "study-set" and len(parts) == 2:
                 result = self._notebook_study_set(notebook_id, payload)
+                return self._send(200, result)
+            if parts[1] == "study-set" and len(parts) == 3 and parts[2] == "review":
+                result = self._notebook_review_study_item(notebook_id, payload)
                 return self._send(200, result)
         except ValueError as e:
             return self._send(400, {"error": str(e)})
@@ -907,10 +912,26 @@ class Handler(BaseHTTPRequestHandler):
             system=system[:_CHAT_SYSTEM_LIMIT],
         )
         result = dict(result)
-        result["study_set"] = notebooks.normalize_study_set(
+        normalized = notebooks.normalize_study_set(
             result.get("text", ""), mode, count, notebook
         )
+        result["study_set"] = notebooks.save_study_set(notebook_id, normalized)
+        result["review_due_count"] = notebooks.review_due_count(notebook_id)
         return result
+
+    def _notebook_review_study_item(self, notebook_id, payload):
+        request = {
+            "study_set_id": self._notebook_request_value(
+                payload, "study_set_id", limit=128
+            ),
+            "item_id": self._notebook_request_value(
+                payload, "item_id", limit=128
+            ),
+            "rating": self._notebook_request_value(
+                payload, "rating", limit=16
+            ),
+        }
+        return notebooks.review_study_item(notebook_id, request)
 
     def _start_search_run(self, payload):
         if not isinstance(payload, dict):

@@ -333,8 +333,45 @@ class NotebookApiTest(unittest.TestCase):
         self.assertEqual(status, 200)
         response = json.loads(body)
         self.assertEqual(response["study_set"]["mode"], "flashcards")
+        self.assertEqual(response["study_set"]["id"], "study-set-1")
         self.assertEqual(response["study_set"]["items"][0]["citation_ids"], ["source-1-doc"])
         self.assertIn("Study set", chat.call_args.kwargs["system"])
+
+    @mock.patch.object(app.gateway, "chat")
+    def test_notebook_review_route_updates_saved_study_item(self, chat):
+        _created, cookie, csrf = self._create_notebook("Review API", "Practice attention")
+        chat.return_value = {
+            "text": json.dumps({
+                "mode": "flashcards",
+                "items": [{"front": "Front", "back": "Back", "citation_ids": []}],
+            }),
+            "provider": "ollama",
+        }
+        generated_status, _headers, generated_body = self._request(
+            "POST",
+            "/api/notebooks/review-api/study-set",
+            {"provider": "ollama", "mode": "flashcards", "count": 1},
+            self._mutation_headers(cookie, csrf),
+        )
+        self.assertEqual(generated_status, 200)
+        study_set = json.loads(generated_body)["study_set"]
+
+        status, _headers, body = self._request(
+            "POST",
+            "/api/notebooks/review-api/study-set/review",
+            {
+                "study_set_id": study_set["id"],
+                "item_id": study_set["items"][0]["id"],
+                "rating": "again",
+            },
+            self._mutation_headers(cookie, csrf),
+        )
+
+        self.assertEqual(status, 200)
+        response = json.loads(body)
+        self.assertEqual(response["study_set"]["items"][0]["status"], "learning")
+        self.assertEqual(response["study_set"]["items"][0]["repetitions"], 0)
+        self.assertEqual(response["review_due_count"], 0)
 
     def test_notebook_export_and_delete_all_learning_data(self):
         _first, cookie, csrf = self._create_notebook("Export one", "Goal one")

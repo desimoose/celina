@@ -597,7 +597,7 @@ async function selectNotebook(id, announce = true) {
     const data = await fetch(`/api/notebooks/${encodeURIComponent(id)}`).then((r) => r.json());
     if (data.error) throw new Error(data.error);
     state.activeNotebook = data.notebook;
-    state.studySet = null;
+    state.studySet = (data.notebook.study_sets || []).slice(-1)[0] || null;
     state.selectedSearchNotebookId = data.notebook.id;
     const sources = state.activeNotebook.sources || [];
     if (!sources.some((source) => source.id === state.activeNotebookSourceId)) {
@@ -740,10 +740,20 @@ function renderStudySet() {
   if (!list) return;
   list.replaceChildren();
   const studySet = state.studySet;
+  const allStudySets = state.activeNotebook?.study_sets || (studySet ? [studySet] : []);
+  const dueCount = allStudySets.reduce(
+    (total, savedSet) => total + (savedSet.items || []).filter(
+      (item) => !item.due_at || Date.parse(item.due_at) <= Date.now(),
+    ).length,
+    0,
+  );
+  const dueLabel = $("study-due-count");
+  if (dueLabel) dueLabel.textContent = studySet ? `${dueCount} due now` : "";
   if (!studySet) return;
   (studySet.items || []).forEach((item, index) => {
     const article = document.createElement("article");
-    article.className = "notebook-study-card";
+    const isDue = !item.due_at || Date.parse(item.due_at) <= Date.now();
+    article.className = `notebook-study-card${isDue ? " is-due" : ""}`;
     const number = document.createElement("span");
     number.className = "notebook-study-number";
     number.textContent = String(index + 1).padStart(2, "0");
@@ -764,6 +774,24 @@ function renderStudySet() {
     citations.className = "notebook-study-citations";
     citations.textContent = (item.citation_ids || []).join(" · ");
     if (citations.textContent) article.appendChild(citations);
+    const meta = document.createElement("small");
+    meta.className = "notebook-study-meta";
+    meta.textContent = isDue
+      ? `${item.status === "review" ? "Review" : "New"} · due now`
+      : `Review · due ${new Date(item.due_at).toLocaleDateString()}`;
+    article.appendChild(meta);
+    const actions = document.createElement("div");
+    actions.className = "notebook-study-actions";
+    [["again", "Again"], ["hard", "Hard"], ["got_it", "Got it"]].forEach(([rating, label]) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = label;
+      button.disabled = !isDue;
+      button.title = isDue ? `Mark ${label.toLowerCase()}` : "This card is scheduled for later";
+      button.onclick = () => reviewStudyCard(item.id, rating);
+      actions.appendChild(button);
+    });
+    article.appendChild(actions);
     list.appendChild(article);
   });
 }
@@ -915,6 +943,10 @@ async function generateStudySet() {
     ).then((r) => r.json());
     if (data.error) throw new Error(data.error);
     state.studySet = data.study_set;
+    state.activeNotebook.study_sets = [
+      ...(state.activeNotebook.study_sets || []),
+      data.study_set,
+    ];
     status.textContent = String(data.study_set.items.length) + " items ready";
     renderStudySet();
   } catch (err) {
@@ -922,6 +954,36 @@ async function generateStudySet() {
     setEngine("Could not generate study set: " + err.message);
   } finally {
     button.disabled = false;
+  }
+}
+
+async function reviewStudyCard(itemId, rating) {
+  if (!state.activeNotebook || !state.studySet) return;
+  const status = $("study-status");
+  status.textContent = "Saving review…";
+  try {
+    const data = await fetch(
+      `/api/notebooks/${encodeURIComponent(state.activeNotebook.id)}/study-set/review`,
+      {
+        method: "POST",
+        headers: notebookHeaders(),
+        body: JSON.stringify({
+          study_set_id: state.studySet.id,
+          item_id: itemId,
+          rating,
+        }),
+      },
+    ).then((r) => r.json());
+    if (data.error) throw new Error(data.error);
+    state.studySet = data.study_set;
+    state.activeNotebook.study_sets = (state.activeNotebook.study_sets || []).map((studySet) => (
+      studySet.id === data.study_set.id ? data.study_set : studySet
+    ));
+    status.textContent = `${data.review_due_count} due now`;
+    renderStudySet();
+  } catch (err) {
+    status.textContent = err.message;
+    setEngine("Could not save review: " + err.message);
   }
 }
 

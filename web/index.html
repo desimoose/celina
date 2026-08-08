@@ -207,10 +207,11 @@
             </form>
             <div id="notebook-note-list" class="notebook-note-list"></div>
           </section>
-          <section id="notebook-study" class="notebook-study" hidden aria-label="Study practice">
+          <section id="notebook-study" class="notebook-study" hidden aria-label="Study practice" data-review-labels="Again|Hard|Got it">
             <div class="notebook-section-head">
               <div><span class="eyebrow">Practice</span><h3>Turn reading into recall</h3></div>
               <div class="notebook-study-controls">
+                <span id="study-due-count" class="notebook-study-due" aria-live="polite"></span>
                 <select id="study-mode" aria-label="Study set type">
                   <option value="flashcards">Flashcards</option>
                   <option value="quiz">Practice quiz</option>

@@ -336,6 +336,13 @@ h1, h2 { font-weight: 800; letter-spacing: -.03em; }
 .notebook-study-card p { margin: 0; color: var(--graphite); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
 .notebook-study-card summary { color: var(--ember-text); cursor: pointer; font-size: 12px; font-weight: 700; }
 .notebook-study-citations { display: block; margin-top: 10px; color: var(--smoke); font-family: var(--mono); font-size: 10px; }
+.notebook-study-due { color: var(--ember-text); font-family: var(--mono); font-size: 10px; font-weight: 800; white-space: nowrap; }
+.notebook-study-card.is-due { box-shadow: inset 3px 0 0 var(--ember), var(--inset-ash); }
+.notebook-study-meta { display: block; margin-top: 10px; color: var(--smoke); font-family: var(--mono); font-size: 10px; }
+.notebook-study-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.notebook-study-actions button { padding: 6px 9px; border: 0; border-radius: var(--radius); background: var(--ash); color: var(--ink); cursor: pointer; font: inherit; font-size: 11px; font-weight: 700; }
+.notebook-study-actions button:hover { background: var(--ember-wash); color: var(--ember-text); }
+.notebook-study-actions button:disabled { cursor: default; opacity: .5; }
 .notebook-path-form { display: flex; flex-direction: column; gap: 10px; padding-bottom: 18px; border-bottom: 1px solid var(--ash); }
 .notebook-path { display: flex; flex-direction: column; gap: 20px; margin-top: 20px; }
 .notebook-path-section { position: relative; padding-left: 16px; border-left: 2px solid var(--ash); }

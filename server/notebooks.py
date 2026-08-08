@@ -1,6 +1,6 @@
 """File-backed research notebooks stored under the local data directory."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 import re
@@ -25,6 +25,8 @@ _TUTOR_CONTEXT_CITATIONS_PER_SOURCE = 6
 _STUDY_ITEM_LIMIT = 12
 _STUDY_TEXT_LIMIT = 1200
 _STUDY_CITATION_LIMIT = 6
+_STUDY_REVIEW_RATINGS = {"again", "hard", "got_it"}
+_STUDY_INTERVAL_CAP_DAYS = 30.0
 _PATH_DEPTHS = {"survey", "college", "graduate"}
 
 
@@ -74,6 +76,10 @@ def _read_notebook_file(notebook_id):
         if key not in data:
             raise ValueError("invalid notebook")
     if not isinstance(data["sources"], list) or not isinstance(data["notes"], list):
+        raise ValueError("invalid notebook")
+    if "study_sets" not in data:
+        data["study_sets"] = []
+    if not isinstance(data["study_sets"], list):
         raise ValueError("invalid notebook")
     return data
 
@@ -285,6 +291,7 @@ def create_notebook(title, goal=""):
         "updated_at": now,
         "sources": [],
         "notes": [],
+        "study_sets": [],
         "learning_path": _default_learning_path(clean_goal, [], "college"),
     }
     _write_notebook(notebook)
@@ -611,3 +618,141 @@ def normalize_study_set(value, mode, count, notebook_or_id):
     if not normalized:
         raise ValueError("provider returned no usable study items")
     return {"mode": mode, "items": normalized}
+
+
+def _study_set_id(notebook):
+    return f"study-set-{len(notebook.get('study_sets', [])) + 1}"
+
+
+def _parse_study_time(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _study_item_is_due(item, now=None):
+    due_at = _parse_study_time(item.get("due_at"))
+    if due_at is None:
+        return True
+    current = now or datetime.now(timezone.utc)
+    return due_at <= current
+
+
+def save_study_set(notebook_id, normalized):
+    notebook = _read_notebook_file(notebook_id)
+    if not isinstance(normalized, dict) or normalized.get("mode") not in {"flashcards", "quiz"}:
+        raise ValueError("invalid study set")
+    items = normalized.get("items")
+    if not isinstance(items, list) or not items:
+        raise ValueError("study set items must be a list")
+    now = _now()
+    study_set = {
+        "id": _study_set_id(notebook),
+        "mode": normalized["mode"],
+        "created_at": now,
+        "updated_at": now,
+        "items": [],
+    }
+    for index, raw in enumerate(items[:_STUDY_ITEM_LIMIT], start=1):
+        item = {
+            "id": f"card-{index}",
+            "citation_ids": list(raw.get("citation_ids") or [])[:_STUDY_CITATION_LIMIT],
+            "status": "learning",
+            "repetitions": 0,
+            "interval_days": 0,
+            "due_at": now,
+            "last_reviewed_at": None,
+        }
+        if study_set["mode"] == "flashcards":
+            item["front"] = _truncate(raw.get("front"), _STUDY_TEXT_LIMIT)
+            item["back"] = _truncate(raw.get("back"), _STUDY_TEXT_LIMIT)
+        else:
+            item["question"] = _truncate(raw.get("question"), _STUDY_TEXT_LIMIT)
+            item["answer"] = _truncate(raw.get("answer"), _STUDY_TEXT_LIMIT)
+        study_set["items"].append(item)
+    if not study_set["items"]:
+        raise ValueError("study set items must be a list")
+    notebook.setdefault("study_sets", []).append(study_set)
+    notebook["updated_at"] = now
+    _write_notebook(notebook)
+    return study_set
+
+
+def review_due_count(notebook_or_id, now=None):
+    notebook = (
+        _read_notebook_file(notebook_or_id)
+        if isinstance(notebook_or_id, str)
+        else notebook_or_id
+    )
+    if not isinstance(notebook, dict):
+        raise ValueError("invalid notebook")
+    current = now or datetime.now(timezone.utc)
+    return sum(
+        1
+        for study_set in notebook.get("study_sets", [])
+        if isinstance(study_set, dict)
+        for item in study_set.get("items", [])
+        if isinstance(item, dict) and _study_item_is_due(item, current)
+    )
+
+
+def review_study_item(notebook_id, payload):
+    notebook = _read_notebook_file(notebook_id)
+    if not isinstance(payload, dict):
+        raise ValueError("invalid review payload")
+    study_set_id = _clean_text(payload.get("study_set_id"), "study_set_id", 128)
+    item_id = _clean_text(payload.get("item_id"), "item_id", 128)
+    rating = _clean_text(payload.get("rating"), "rating", 16)
+    if rating not in _STUDY_REVIEW_RATINGS:
+        raise ValueError("rating must be one of: again, hard, got_it")
+    study_set = next(
+        (item for item in notebook.get("study_sets", [])
+         if isinstance(item, dict) and item.get("id") == study_set_id),
+        None,
+    )
+    if study_set is None:
+        raise ValueError("unknown study set")
+    item = next(
+        (candidate for candidate in study_set.get("items", [])
+         if isinstance(candidate, dict) and candidate.get("id") == item_id),
+        None,
+    )
+    if item is None:
+        raise ValueError("unknown study item")
+    previous_interval = float(item.get("interval_days") or 0)
+    repetitions = int(item.get("repetitions") or 0)
+    if rating == "again":
+        interval_days = 1.0 / 24.0
+        item["status"] = "learning"
+        item["repetitions"] = 0
+    elif rating == "hard":
+        interval_days = min(
+            _STUDY_INTERVAL_CAP_DAYS,
+            max(1.0, previous_interval * 1.5 if previous_interval else 1.0),
+        )
+        item["status"] = "review"
+        item["repetitions"] = repetitions
+    else:
+        interval_days = min(
+            _STUDY_INTERVAL_CAP_DAYS,
+            max(1.0, previous_interval * 2.5 if previous_interval else 1.0),
+        )
+        item["status"] = "review"
+        item["repetitions"] = repetitions + 1
+    reviewed_at = datetime.now(timezone.utc)
+    item["interval_days"] = interval_days
+    item["last_reviewed_at"] = reviewed_at.isoformat(timespec="seconds").replace("+00:00", "Z")
+    item["due_at"] = (reviewed_at + timedelta(days=interval_days)).isoformat(timespec="seconds").replace("+00:00", "Z")
+    study_set["updated_at"] = item["last_reviewed_at"]
+    notebook["updated_at"] = item["last_reviewed_at"]
+    _write_notebook(notebook)
+    return {
+        "study_set": study_set,
+        "review_due_count": review_due_count(notebook, reviewed_at),
+    }

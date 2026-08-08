@@ -336,6 +336,59 @@ class NotebooksTest(unittest.TestCase):
         self.assertLessEqual(len(normalized["items"][0]["back"]), 1200)
         self.assertEqual(normalized["items"][0]["citation_ids"], ["source-1-doc"])
 
+    def test_save_study_set_persists_stable_card_ids_and_due_count(self):
+        notebook = self.notebooks.create_notebook("Saved study")
+        saved = self.notebooks.save_study_set(
+            notebook["id"],
+            {
+                "mode": "flashcards",
+                "items": [{"front": "Front", "back": "Back", "citation_ids": []}],
+            },
+        )
+
+        self.assertEqual(saved["id"], "study-set-1")
+        self.assertEqual(saved["items"][0]["id"], "card-1")
+        self.assertEqual(saved["items"][0]["status"], "learning")
+        self.assertEqual(self.notebooks.review_due_count(notebook["id"]), 1)
+        self.assertEqual(
+            self.notebooks.read_notebook(notebook["id"])["study_sets"][0]["id"],
+            "study-set-1",
+        )
+
+    def test_review_rating_updates_card_schedule_and_due_count(self):
+        notebook = self.notebooks.create_notebook("Review scheduling")
+        saved = self.notebooks.save_study_set(
+            notebook["id"],
+            {
+                "mode": "flashcards",
+                "items": [{"front": "Front", "back": "Back", "citation_ids": []}],
+            },
+        )
+
+        reviewed = self.notebooks.review_study_item(
+            notebook["id"],
+            {
+                "study_set_id": saved["id"],
+                "item_id": saved["items"][0]["id"],
+                "rating": "got_it",
+            },
+        )
+
+        item = reviewed["study_set"]["items"][0]
+        self.assertEqual(item["repetitions"], 1)
+        self.assertEqual(item["status"], "review")
+        self.assertGreater(item["interval_days"], 0)
+        self.assertEqual(reviewed["review_due_count"], 0)
+        with self.assertRaisesRegex(ValueError, "rating"):
+            self.notebooks.review_study_item(
+                notebook["id"],
+                {
+                    "study_set_id": saved["id"],
+                    "item_id": saved["items"][0]["id"],
+                    "rating": "perfect",
+                },
+            )
+
     def test_store_uses_workspace_notebooks_files(self):
         notebook = self.notebooks.create_notebook("My notebook")
         target = os.path.join(self.data_root, "workspace", "notebooks", f"{notebook['id']}.json")

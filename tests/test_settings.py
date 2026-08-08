@@ -146,6 +146,26 @@ class SettingsUiSourceTest(unittest.TestCase):
         self.assertIn('learning-home', html)
         self.assertIn('/api/learning-home', js)
 
+    def test_guided_study_session_uses_due_cards_tutor_and_notes(self):
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        with open(os.path.join(root, "web", "app.js"), encoding="utf-8") as fh:
+            js = fh.read()
+        with open(os.path.join(root, "web", "index.html"), encoding="utf-8") as fh:
+            html = fh.read()
+
+        self.assertIn("guidedSession", js)
+        self.assertIn("startGuidedSession", js)
+        self.assertIn("/study-set/review", js)
+        self.assertIn("/tutor", js)
+        self.assertIn("/notes", js)
+        self.assertIn("runGuidedQuiz", js)
+        self.assertIn("data-guided-followup-rating", html)
+        self.assertIn("guided-session", html)
+        self.assertIn("guided-session-start", html)
+        self.assertIn("guided-session-reveal", html)
+        self.assertIn("guided-session-save-note", html)
+        self.assertIn("Start guided session", html)
+
 
 class SettingsRoutesTest(unittest.TestCase):
     def tearDown(self):

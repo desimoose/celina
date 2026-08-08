@@ -85,7 +85,7 @@
           <h2>Keep the thread.</h2>
           <p>Return to the ideas that are due, then choose the next step that moves you forward.</p>
         </div>
-        <button id="learning-home-refresh" class="btn btn--ghost" type="button">Refresh</button>
+        <div class="learning-home-head-actions"><button id="guided-session-start" class="btn btn--primary" type="button">Start guided session</button><button id="learning-home-refresh" class="btn btn--ghost" type="button">Refresh</button></div>
       </div>
       <div class="learning-home-momentum" id="learning-home-momentum">
         <div class="learning-home-momentum-main"><span class="eyebrow">Today</span><strong id="home-due-count">0</strong><span>items due now</span></div>
@@ -265,6 +265,55 @@
             </div>
             <p id="study-status" class="notebook-form-status" aria-live="polite"></p>
             <div id="study-list" class="notebook-study-list"></div>
+          </section>
+          <section id="guided-session" class="guided-session" hidden aria-labelledby="guided-session-title">
+            <div class="notebook-section-head guided-session-head">
+              <div><span class="eyebrow" id="guided-session-step">Guided session</span><h3 id="guided-session-title">Build recall, then apply it</h3></div>
+              <button id="guided-session-close" class="btn btn--ghost" type="button">Back to notebook</button>
+            </div>
+            <p id="guided-session-status" class="notebook-form-status" aria-live="polite"></p>
+            <div id="guided-session-recall">
+              <p id="guided-session-prompt" class="guided-session-prompt"></p>
+              <div id="guided-session-answer" class="guided-session-answer" hidden></div>
+              <div class="guided-session-actions">
+                <button id="guided-session-reveal" class="btn btn--ghost" type="button">Reveal answer</button>
+                <div id="guided-session-ratings" class="guided-session-ratings" hidden>
+                  <span>How did that feel?</span>
+                  <button type="button" data-guided-rating="again">Again</button>
+                  <button type="button" data-guided-rating="hard">Hard</button>
+                  <button type="button" data-guided-rating="got_it">Got it</button>
+                </div>
+              </div>
+            </div>
+            <div id="guided-session-debrief" hidden>
+              <p class="guided-session-prompt">Use the idea in your own words. Celina will help you test the connection against the notebook evidence.</p>
+              <label class="guided-session-label"><span>Your application attempt</span><textarea id="guided-session-attempt" maxlength="2000" rows="5" placeholder="What would this idea help you explain, predict, or decide?"></textarea></label>
+              <button id="guided-session-ask" class="btn btn--primary" type="button">Ask the notebook tutor</button>
+              <article id="guided-session-response" class="guided-session-response" hidden>
+                <span class="eyebrow">Tutor debrief</span>
+                <p id="guided-session-response-text"></p>
+                <div id="guided-session-citations" class="msg-citations"></div>
+                <button id="guided-session-quiz" class="btn btn--ghost" type="button" hidden>Generate one follow-up check</button>
+              </article>
+              <article id="guided-session-followup" class="guided-session-response" hidden>
+                <span class="eyebrow">Follow-up check</span>
+                <p id="guided-session-followup-question" class="guided-session-prompt"></p>
+                <p id="guided-session-followup-answer" class="guided-session-answer" hidden></p>
+                <div class="guided-session-actions">
+                  <button id="guided-session-followup-reveal" class="btn btn--ghost" type="button">Reveal answer</button>
+                  <div id="guided-session-followup-ratings" class="guided-session-ratings" hidden>
+                    <span>Schedule the next pass</span>
+                    <button type="button" data-guided-followup-rating="again">Again</button>
+                    <button type="button" data-guided-followup-rating="hard">Hard</button>
+                    <button type="button" data-guided-followup-rating="got_it">Got it</button>
+                  </div>
+                </div>
+              </article>
+              <form id="guided-session-note-form" class="guided-session-note" hidden>
+                <label class="guided-session-label"><span>What is still unclear?</span><textarea id="guided-session-confusion" maxlength="3000" rows="4" placeholder="Name the gap you want to return to later."></textarea></label>
+                <button id="guided-session-save-note" class="btn btn--ghost" type="submit">Save as a working note</button>
+              </form>
+            </div>
           </section>
         </div>
 

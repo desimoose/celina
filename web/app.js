@@ -19,6 +19,7 @@ const state = {
   activeNotebookSourceId: null,
   selectedSearchNotebookId: "",
   studySet: null,
+  guidedSession: null,
   learningHome: null,
   outputFormat: "markdown",
   sessionRetentionSeconds: 86400,
@@ -567,6 +568,47 @@ async function openNotebookFromHome(notebookId, studySetId = "") {
   }
 }
 
+async function startGuidedSession(notebookId = "", studySetId = "", itemId = "") {
+  const firstDue = (state.learningHome?.due_items || [])[0];
+  notebookId = notebookId || firstDue?.notebook_id || "";
+  studySetId = studySetId || firstDue?.study_set_id || "";
+  itemId = itemId || firstDue?.item_id || "";
+  if (!notebookId || !studySetId) {
+    setEngine("Nothing is due yet. Generate a study set in a notebook to begin.");
+    return;
+  }
+  nav("notebook");
+  await selectNotebook(notebookId, false);
+  const studySet = (state.activeNotebook?.study_sets || []).find((savedSet) => savedSet.id === studySetId);
+  if (!studySet) {
+    setEngine("That study set is no longer available.");
+    return;
+  }
+  const dueItems = (studySet.items || []).filter((item) => (
+    !item.due_at || Date.parse(item.due_at) <= Date.now()
+  ));
+  const orderedItems = itemId && dueItems.some((item) => item.id === itemId)
+    ? [dueItems.find((item) => item.id === itemId), ...dueItems.filter((item) => item.id !== itemId)]
+    : dueItems;
+  if (!orderedItems.length) {
+    setEngine("Nothing is due in this study set.");
+    return;
+  }
+  state.studySet = studySet;
+  state.guidedSession = {
+    notebookId,
+    studySetId,
+    itemIds: orderedItems.map((item) => item.id),
+    index: 0,
+    revealed: false,
+    tutor: null,
+    followup: null,
+  };
+  renderNotebook();
+  $("guided-session")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  setEngine("Guided session started");
+}
+
 function renderLearningHome() {
   const data = state.learningHome;
   if (!data) return;
@@ -577,6 +619,9 @@ function renderLearningHome() {
   $("home-card-count").textContent = String(momentum.total_cards || 0);
 
   const dueItems = data.due_items || [];
+  const guidedStart = $("guided-session-start");
+  guidedStart.disabled = dueItems.length === 0;
+  guidedStart.title = dueItems.length ? "Work through due recall, then apply it with the tutor" : "Nothing is due yet";
   $("home-queue-label").textContent = `${dueItems.length} shown`;
   const dueList = $("home-due-list");
   dueList.replaceChildren(...dueItems.map((item) => {
@@ -592,8 +637,8 @@ function renderLearningHome() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "btn btn--ghost";
-    button.textContent = "Study now";
-    button.onclick = () => openNotebookFromHome(item.notebook_id, item.study_set_id);
+    button.textContent = "Guided session";
+    button.onclick = () => startGuidedSession(item.notebook_id, item.study_set_id, item.item_id);
     row.append(copy, button);
     return row;
   }));
@@ -851,6 +896,7 @@ function renderNotebook() {
     $("path-goal").value = path.goal || "";
   }
   renderStudySet();
+  renderGuidedSession();
 }
 
 function renderStudySet() {
@@ -912,6 +958,230 @@ function renderStudySet() {
     article.appendChild(actions);
     list.appendChild(article);
   });
+}
+
+function currentGuidedItem() {
+  const session = state.guidedSession;
+  if (!session || !state.studySet) return null;
+  const itemId = session.itemIds[session.index];
+  return (state.studySet.items || []).find((item) => item.id === itemId) || null;
+}
+
+function closeGuidedSession() {
+  state.guidedSession = null;
+  renderNotebook();
+  setEngine("Guided session paused");
+}
+
+function renderGuidedSession() {
+  const root = $("guided-session");
+  if (!root) return;
+  const session = state.guidedSession;
+  root.hidden = !session;
+  if (!session) return;
+  const item = currentGuidedItem();
+  const recall = $("guided-session-recall");
+  const debrief = $("guided-session-debrief");
+  const response = $("guided-session-response");
+  const quiz = $("guided-session-quiz");
+  const followup = $("guided-session-followup");
+  const noteForm = $("guided-session-note-form");
+  if (!item) {
+    recall.hidden = true;
+    debrief.hidden = false;
+    $("guided-session-step").textContent = "Debrief";
+    $("guided-session-status").textContent = session.followup?.reviewed
+      ? "Follow-up scheduled. Save any remaining gap as a working note."
+      : "Recall complete. Apply the idea before you leave.";
+    response.hidden = !session.tutor;
+    quiz.hidden = !session.tutor || Boolean(session.followup);
+    followup.hidden = !session.followup;
+    noteForm.hidden = !session.tutor;
+    if (session.followup) {
+      $("guided-session-followup-question").textContent = session.followup.item.question;
+      $("guided-session-followup-answer").textContent = session.followup.item.answer;
+      $("guided-session-followup-answer").hidden = !session.followup.revealed;
+      $("guided-session-followup-reveal").hidden = session.followup.revealed;
+      $("guided-session-followup-ratings").hidden = !session.followup.revealed;
+    }
+    return;
+  }
+  recall.hidden = false;
+  debrief.hidden = true;
+  $("guided-session-step").textContent = "Recall " + (session.index + 1) + " of " + session.itemIds.length;
+  $("guided-session-prompt").textContent = state.studySet.mode === "quiz" ? item.question : item.front;
+  $("guided-session-answer").textContent = state.studySet.mode === "quiz" ? item.answer : item.back;
+  $("guided-session-answer").hidden = !session.revealed;
+  $("guided-session-reveal").hidden = session.revealed;
+  $("guided-session-ratings").hidden = !session.revealed;
+  $("guided-session-status").textContent = item.status === "review"
+    ? "Recall first. The answer stays hidden until you commit."
+    : "New card. Try to answer before revealing the evidence-backed response.";
+}
+
+async function reviewGuidedCard(rating) {
+  const session = state.guidedSession;
+  const item = currentGuidedItem();
+  if (!session || !item || !state.activeNotebook) return;
+  const status = $("guided-session-status");
+  status.textContent = "Saving review…";
+  document.querySelectorAll("[data-guided-rating]").forEach((button) => { button.disabled = true; });
+  try {
+    const data = await fetch(
+      "/api/notebooks/" + encodeURIComponent(state.activeNotebook.id) + "/study-set/review",
+      {
+        method: "POST",
+        headers: notebookHeaders(),
+        body: JSON.stringify({
+          study_set_id: session.studySetId,
+          item_id: item.id,
+          rating,
+        }),
+      },
+    ).then((r) => r.json());
+    if (data.error) throw new Error(data.error);
+    state.studySet = data.study_set;
+    state.activeNotebook.study_sets = (state.activeNotebook.study_sets || []).map((studySet) => (
+      studySet.id === data.study_set.id ? data.study_set : studySet
+    ));
+    session.index += 1;
+    session.revealed = false;
+    renderNotebook();
+  } catch (err) {
+    status.textContent = err.message;
+    setEngine("Could not save guided review: " + err.message);
+  }
+}
+
+async function runGuidedDebrief() {
+  const session = state.guidedSession;
+  if (!session || !state.activeNotebook) return;
+  const attempt = $("guided-session-attempt").value.trim();
+  const lastItemId = session.itemIds[Math.max(0, session.itemIds.length - 1)];
+  const lastItem = (state.studySet?.items || []).find((item) => item.id === lastItemId) || {};
+  const prompt = "I am completing a guided study session. Explain the weakest recalled idea at college level using only notebook evidence, correct my application attempt, and end with one short follow-up question. Idea: "
+    + (state.studySet?.mode === "quiz" ? lastItem.question : lastItem.front)
+    + ". Answer: " + (state.studySet?.mode === "quiz" ? lastItem.answer : lastItem.back)
+    + ". My attempt: " + (attempt || "(no attempt yet)");
+  const button = $("guided-session-ask");
+  const status = $("guided-session-status");
+  button.disabled = true;
+  status.textContent = "Reading the notebook evidence…";
+  try {
+    const data = await fetch("/api/notebooks/" + encodeURIComponent(state.activeNotebook.id) + "/tutor", {
+      method: "POST",
+      headers: notebookHeaders(),
+      body: JSON.stringify({ provider: state.provider, question: prompt.slice(0, 1900), history: [] }),
+    }).then((r) => r.json());
+    if (data.error) throw new Error(data.error);
+    session.tutor = data;
+    $("guided-session-response-text").textContent = data.text || "";
+    const citations = $("guided-session-citations");
+    citations.replaceChildren();
+    (data.citations || []).forEach((citation) => {
+      const item = document.createElement("span");
+      item.className = "msg-citation";
+      item.textContent = (citation.title || "Source") + " · " + (citation.label || "document");
+      citations.appendChild(item);
+    });
+    $("guided-session-response").hidden = false;
+    $("guided-session-quiz").hidden = false;
+    $("guided-session-note-form").hidden = false;
+    status.textContent = "Debrief complete. Save the gap you want to revisit.";
+  } catch (err) {
+    status.textContent = err.message;
+    setEngine("Could not run guided debrief: " + err.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function runGuidedQuiz() {
+  const session = state.guidedSession;
+  if (!session || !state.activeNotebook) return;
+  const button = $("guided-session-quiz");
+  const status = $("guided-session-status");
+  button.disabled = true;
+  status.textContent = "Building one bounded follow-up check…";
+  try {
+    const data = await fetch("/api/notebooks/" + encodeURIComponent(state.activeNotebook.id) + "/study-set", {
+      method: "POST",
+      headers: notebookHeaders(),
+      body: JSON.stringify({ provider: state.provider, mode: "quiz", count: 1 }),
+    }).then((r) => r.json());
+    if (data.error) throw new Error(data.error);
+    const item = data.study_set?.items?.[0];
+    if (!item) throw new Error("The tutor returned no follow-up question");
+    session.followup = {
+      studySetId: data.study_set.id,
+      item,
+      revealed: false,
+      reviewed: false,
+    };
+    state.activeNotebook.study_sets = [
+      ...(state.activeNotebook.study_sets || []),
+      data.study_set,
+    ];
+    renderGuidedSession();
+    status.textContent = "Try the follow-up before revealing the answer.";
+  } catch (err) {
+    status.textContent = err.message;
+    setEngine("Could not create follow-up check: " + err.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function reviewGuidedFollowup(rating) {
+  const session = state.guidedSession;
+  const followup = session?.followup;
+  if (!followup || !state.activeNotebook) return;
+  document.querySelectorAll("[data-guided-followup-rating]").forEach((button) => { button.disabled = true; });
+  const data = await fetch(
+    "/api/notebooks/" + encodeURIComponent(state.activeNotebook.id) + "/study-set/review",
+    {
+      method: "POST",
+      headers: notebookHeaders(),
+      body: JSON.stringify({
+        study_set_id: followup.studySetId,
+        item_id: followup.item.id,
+        rating,
+      }),
+    },
+  ).then((r) => r.json());
+  if (data.error) {
+    setEngine("Could not save follow-up review: " + data.error);
+    return;
+  }
+  state.activeNotebook.study_sets = (state.activeNotebook.study_sets || []).map((studySet) => (
+    studySet.id === data.study_set.id ? data.study_set : studySet
+  ));
+  followup.item = data.study_set.items.find((item) => item.id === followup.item.id) || followup.item;
+  followup.reviewed = true;
+  renderGuidedSession();
+}
+
+async function saveGuidedNote(e) {
+  e.preventDefault();
+  const session = state.guidedSession;
+  if (!session || !state.activeNotebook) return;
+  const confusion = $("guided-session-confusion").value.trim();
+  if (!confusion) return $("guided-session-confusion").focus();
+  const sourceIds = [...new Set((session.tutor?.citations || []).map((citation) => citation.source_id).filter(Boolean))];
+  const data = await fetch("/api/notebooks/" + encodeURIComponent(state.activeNotebook.id) + "/notes", {
+    method: "POST",
+    headers: notebookHeaders(),
+    body: JSON.stringify({
+      title: "Still unclear: " + String(state.activeNotebook.title || "guided study").slice(0, 120),
+      body: confusion,
+      source_ids: sourceIds,
+    }),
+  }).then((r) => r.json());
+  if (data.error) return setEngine("Could not save guided note: " + data.error);
+  state.activeNotebook.notes = [data.note, ...(state.activeNotebook.notes || [])];
+  $("guided-session-save-note").disabled = true;
+  $("guided-session-status").textContent = "Saved. Your next pass has a clear place to begin.";
+  notifyWhenReady("Working note saved", "You can return to this gap from the notebook.");
 }
 
 function showNotebookCreate(prefill = null) {
@@ -1986,6 +2256,7 @@ $("session-delete").onclick = async () => {
   if (ok) updatePrivacyUi();
 };
 $("example-q").onclick = () => { $("url").value = "does caffeine affect sleep?"; findPapers(); };
+$("guided-session-start").onclick = () => startGuidedSession();
 $("learning-home-refresh").onclick = loadLearningHome;
 $("refresh").onclick = loadFiles;
 $("project-select").onchange = (e) => { state.projectId = e.target.value; renderProjects(); };
@@ -2027,6 +2298,26 @@ if (typeof module !== "undefined" && module.exports) {
   $("notebook-note-form").addEventListener("submit", addNotebookNote);
   $("notebook-path-form").addEventListener("submit", generateNotebookPath);
   $("study-generate").addEventListener("click", generateStudySet);
+  $("guided-session-close").addEventListener("click", closeGuidedSession);
+  $("guided-session-reveal").addEventListener("click", () => {
+    if (!state.guidedSession) return;
+    state.guidedSession.revealed = true;
+    renderGuidedSession();
+  });
+  document.querySelectorAll("[data-guided-rating]").forEach((button) => {
+    button.addEventListener("click", () => reviewGuidedCard(button.dataset.guidedRating));
+  });
+  $("guided-session-ask").addEventListener("click", runGuidedDebrief);
+  $("guided-session-quiz").addEventListener("click", runGuidedQuiz);
+  $("guided-session-followup-reveal").addEventListener("click", () => {
+    if (!state.guidedSession?.followup) return;
+    state.guidedSession.followup.revealed = true;
+    renderGuidedSession();
+  });
+  document.querySelectorAll("[data-guided-followup-rating]").forEach((button) => {
+    button.addEventListener("click", () => reviewGuidedFollowup(button.dataset.guidedFollowupRating));
+  });
+  $("guided-session-note-form").addEventListener("submit", saveGuidedNote);
   $("composer").addEventListener("submit", send);
   $("clear").onclick = () => { state.history = []; $("log").innerHTML = ""; $("usage").textContent = ""; };
   $("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("composer").requestSubmit(); });

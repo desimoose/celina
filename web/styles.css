@@ -401,6 +401,7 @@ h1, h2 { font-weight: 800; letter-spacing: -.03em; }
 }
 .session-delete:disabled { opacity: .5; cursor: not-allowed; box-shadow: var(--inset-ash); }
 .learning-home-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 34px 42px 24px; }
+.learning-home-head-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .learning-home-head h2 { margin: 4px 0 8px; font-size: 32px; line-height: 1.05; }
 .learning-home-head p { max-width: 58ch; margin: 0; color: var(--graphite); font-size: 14px; line-height: 1.5; }
 .learning-home-momentum { display: grid; grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(120px, .7fr)); gap: 1px; margin: 0 42px; overflow: hidden; border-radius: var(--radius); background: var(--ash); box-shadow: var(--shadow-soft); }
@@ -431,6 +432,20 @@ h1, h2 { font-weight: 800; letter-spacing: -.03em; }
 .learning-home-progress { height: 5px; margin: 8px 0 10px; overflow: hidden; border-radius: 99px; background: var(--ash); }
 .learning-home-progress span { display: block; height: 100%; border-radius: inherit; background: var(--ember); }
 .learning-home-notebook-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--smoke); font-family: var(--mono); font-size: 10px; }
+.guided-session { margin-top: 16px; padding: 22px; border: 1px solid var(--ember); border-radius: var(--radius); background: linear-gradient(135deg, var(--white), var(--cream)); box-shadow: var(--shadow-soft); }
+.guided-session-head { margin-bottom: 8px; }
+.guided-session-prompt { max-width: 72ch; margin: 14px 0; color: var(--ink); font-family: var(--serif); font-size: 22px; line-height: 1.35; }
+.guided-session-answer { max-width: 72ch; margin: 12px 0 18px; padding: 14px 16px; border-left: 3px solid var(--ember); color: var(--graphite); background: rgba(255,255,255,.72); line-height: 1.55; white-space: pre-wrap; }
+.guided-session-actions, .guided-session-ratings { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.guided-session-ratings > span { margin-right: 4px; color: var(--graphite); font-family: var(--mono); font-size: 11px; }
+.guided-session-ratings button { padding: 8px 12px; border: 1px solid var(--ash); border-radius: 999px; color: var(--ink); background: var(--white); cursor: pointer; }
+.guided-session-ratings button:hover:not(:disabled) { border-color: var(--ember); color: var(--ember-text); }
+.guided-session-label { display: grid; gap: 7px; max-width: 72ch; margin: 16px 0; }
+.guided-session-label span { color: var(--graphite); font-family: var(--mono); font-size: 11px; }
+.guided-session-label textarea { width: 100%; min-height: 100px; padding: 12px; border: 1px solid var(--ash); border-radius: var(--radius); color: var(--ink); background: var(--white); resize: vertical; }
+.guided-session-response { max-width: 78ch; margin-top: 20px; padding: 16px; border-radius: var(--radius); background: var(--white); box-shadow: var(--inset-ash); }
+.guided-session-response p { margin: 8px 0 12px; color: var(--ink); line-height: 1.6; white-space: pre-wrap; }
+.guided-session-note { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--ash); }
 .research-loop { margin: 0 32px; padding: 12px 14px; background: var(--cream); border-radius: var(--radius); box-shadow: var(--inset-ash); }
 .research-loop[hidden] { display: none; }
 .research-loop-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; color: var(--ink); font-size: 12px; font-weight: 800; }
@@ -736,6 +751,15 @@ h1, h2 { font-weight: 800; letter-spacing: -.03em; }
 .tour-foot .wl-text { margin-top: 0; }
 .tour-actions { display: flex; gap: 8px; }
 @media (max-width: 600px) {
+  .learning-home-head { flex-direction: column; padding: 24px 18px 18px; }
+  .learning-home-head-actions { width: 100%; justify-content: flex-start; }
+  .learning-home-head-actions .btn { flex: 1; }
+  .learning-home-momentum { grid-template-columns: repeat(2, 1fr); margin: 0 18px; }
+  .learning-home-grid { grid-template-columns: 1fr; padding: 18px 18px 0; }
+  .learning-home-notebooks { margin-left: 18px; margin-right: 18px; }
+  .guided-session { padding: 18px; }
+  .guided-session-head { align-items: flex-start; }
+  .guided-session-prompt { font-size: 19px; }
   .notebook-toolbar { flex-direction: column; padding: 20px 18px 16px; gap: 14px; }
   .notebook-actions { width: 100%; align-items: stretch; }
   .notebook-select-label { flex: 1; }
